@@ -380,3 +380,47 @@ excluding the duplicate text fallback and protocol framing. Oversized read
 results fail with guidance to narrow the request. If a mutation has already
 succeeded but its result is too large, the server returns a compact success with
 `completed: true` and `output_omitted: true` rather than suggesting a retry.
+
+## GitHub CI and releases
+
+Pushes to branches and pull requests run `make ci` without uploading build
+artifacts. Version tags matching `v*` trigger the release workflow. Use version
+names such as `v1.2.3` or `v1.2.3-rc.1`:
+
+```sh
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+The tag workflow runs checks and six cross-compilation jobs in parallel on Ubuntu.
+Go builds directly with `CGO_ENABLED=0`; no QEMU, Docker, macOS runner, Windows
+runner, or target C compiler is involved. Go dependencies and build caches are
+cached by `setup-go`. Release jobs use the stable Go toolchain.
+
+Once checks and every build pass, the workflow creates a GitHub release with
+generated notes and these assets:
+
+| OS | Architectures | Archive |
+| --- | --- | --- |
+| macOS (`darwin`) | `arm64`, `x86_64` | `.tar.gz` |
+| Linux | `arm64`, `x86_64` | `.tar.gz` |
+| Windows | `arm64`, `x86_64` | `.zip` |
+
+Names follow `i4d_v1.2.3_linux_x86_64.tar.gz`. Each archive contains `i4d` (or
+`i4d.exe`) and the README. `SHA256SUMS` contains checksums of all six archives.
+Go calls x86_64 `amd64`; the release filenames use `x86_64`.
+Prerelease tags such as `v1.2.3-rc.1` create prereleases. Releases are created by
+the tag workflow; do not create a release for the tag beforehand. Published
+releases are not overwritten by reruns. Intermediate Actions artifacts exist
+only on tag runs and expire after one day; release assets remain available.
+
+To reproduce one archive locally from the repository root on Linux:
+
+```sh
+./scripts/build-release.sh v1.2.3 linux arm64
+```
+
+The packaging script needs Go, Bash, tar, gzip, and zip. It writes into ignored
+`dist/` by default. Cross-compilation verifies builds; it does not execute tests
+on the foreign OS/architecture. Native race-enabled tests run in the CI job.
+The macOS and Windows binaries are not distribution-signed or notarized.
