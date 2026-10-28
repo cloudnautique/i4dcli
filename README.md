@@ -10,7 +10,7 @@ and creates, edits, and deletes standalone events.
 Requires Go 1.24 or newer.
 
 ```sh
-go build -o bin/i4d ./cmd/i4d
+make
 ./bin/i4d calendars list --username you@icloud.com
 ```
 
@@ -124,9 +124,25 @@ and managing meeting invitations are not supported.
 ## Development
 
 ```sh
-go test ./...
-go vet ./...
+make           # Build bin/i4d (same as make build)
+make test      # Run all tests with the race detector
+make vet       # Run go vet
+make generate  # Run go generate ./...
+make lint      # Check gofmt formatting and run pinned Staticcheck
+make ci        # Generate, build, vet, lint, then test
 ```
+
+`make ci` runs targets sequentially, including when invoked with `make -j ci`,
+so generation finishes before compilation or checks. No `go:generate` directives
+exist yet; the generation target is ready for future generators. Lint checks
+formatting without rewriting files. Staticcheck is pinned in the Makefile and
+runs through `go run`, so no separate installation is required; the first run
+needs network access. Its current version requires Go 1.26+, which Go can fetch
+automatically when toolchain auto-selection is enabled. The application itself
+continues to require Go 1.24+. Race tests require a supported platform and C toolchain.
+
+Override the output path with `make BINARY=/path/to/i4d` or the Go executable
+with `make GO=/path/to/go`.
 
 Protocol tests use a local fake CalDAV server; they require no Apple credentials.
 A real account is still needed to validate live iCloud connectivity. The calendar

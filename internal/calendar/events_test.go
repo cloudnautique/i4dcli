@@ -169,7 +169,9 @@ func TestEventTimezonesAndUnexpandedRecurrence(t *testing.T) {
 }
 
 func TestEventsFailureIsNotPartialSuccess(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "unavailable", 503) }))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
 	defer server.Close()
 	now := time.Now()
 	got, err := Events(context.Background(), server.Client(), server.URL, []Calendar{{Name: "Bill", Path: "/bill"}}, now, now.Add(time.Hour), time.UTC)

@@ -35,11 +35,11 @@ func Run(ctx context.Context, args []string, out, stderr io.Writer) error {
 		return printHelp(out, permissions)
 	}
 	if args[0] == "policy" {
-		for _, arg := range args[1:] {
-			if arg == "--help" || arg == "-h" {
+		if len(args) > 1 {
+			if len(args) == 2 && (args[1] == "--help" || args[1] == "-h") {
 				return printHelp(out, permissions)
 			}
-			return fmt.Errorf("unexpected policy argument %q", arg)
+			return fmt.Errorf("unexpected policy argument %q", args[1])
 		}
 		return printPolicy(out, permissions, global.asJSON)
 	}
