@@ -1,0 +1,33 @@
+version: 2
+project_name: i4d
+
+builds:
+  - id: i4d
+    main: ./cmd/i4d
+    binary: i4d
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath, -mod=readonly]
+    ldflags: [-s -w]
+
+archives:
+  - id: i4d
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: '{{ .ProjectName }}_v{{ .Version }}_{{ .Os }}_{{ if eq .Arch "amd64" }}x86_64{{ else }}{{ .Arch }}{{ end }}'
+    files:
+      - README.md
+
+checksum:
+  name_template: SHA256SUMS
+  algorithm: sha256
+
+changelog:
+  use: github-native
+
+release:
+  prerelease: auto
