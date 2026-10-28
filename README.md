@@ -7,7 +7,7 @@ and creates, edits, and deletes standalone events.
 
 ## Build and run
 
-Requires Go 1.24 or newer.
+Requires Go 1.25.5 or newer (the pinned MCP library’s minimum).
 
 ```sh
 make
@@ -56,7 +56,7 @@ you can also use an exact path from `calendars list`. Repeated selections query
 the calendar once. Ambiguous names require a path; unknown names and task-only
 collections produce errors. At least one calendar is required.
 
-Both boundaries are required: `--from` is inclusive and `--to` exclusive, so the
+For an explicit range both boundaries are required: `--from` is inclusive and `--to` exclusive, so the
 example covers October 28 through November 3. Accepts `YYYY-MM-DD` or RFC3339
 timestamps with an explicit offset. Dates and floating event times use the
 machine's local timezone by default. Use `--timezone America/New_York` (or your
@@ -96,7 +96,8 @@ For an all-day event, use dates for both boundaries, for example
 `--start 2026-10-29 --end 2026-10-30` for October 29 only. The end is exclusive
 and must be later than the start. Timed events are stored in UTC.
 
-Use the `path` returned by create or `events list --json` to edit or delete:
+Use the `path` returned by create or the PATH column in `events list` to inspect,
+edit, or delete an event:
 
 ```sh
 ./bin/i4d events edit --calendar "bill" --path /ACCOUNT/calendars/CALENDAR/EVENT.ics \
@@ -110,8 +111,9 @@ properties. An empty location or description clears that field. The summary
 cannot be blank. To reschedule or switch between timed and all-day, supply both
 boundaries. Event paths must belong directly to the selected calendar.
 
-Delete executes immediately; there is no interactive confirmation. All three
-commands support `--json` (an object with `action` and `path`), `--username`, and
+Delete asks for confirmation in an interactive terminal. Scripts must pass
+`--force`; `--no-input` alone never authorizes deletion. `--force` cannot override
+a permission profile or exact command restriction. All three commands support `--json` (an object with `action` and `path`), `--username`, and
 `--timeout`. Creation refuses to overwrite an existing resource. Edit and delete
 fetch the original object and use its strong ETag in a conditional write; a
 concurrent change causes an error instead of overwriting it. Servers without a
@@ -139,7 +141,7 @@ formatting without rewriting files. Staticcheck is pinned in the Makefile and
 runs through `go run`, so no separate installation is required; the first run
 needs network access. Its current version requires Go 1.26+, which Go can fetch
 automatically when toolchain auto-selection is enabled. The application itself
-continues to require Go 1.24+. Race tests require a supported platform and C toolchain.
+requires Go 1.25.5+. Race tests require a supported platform and C toolchain.
 
 Override the output path with `make BINARY=/path/to/i4d` or the Go executable
 with `make GO=/path/to/go`.
@@ -192,7 +194,7 @@ show only permitted operations.
 
 `--no-input` requires credentials in the environment (or `--username` for the
 account) and never prompts for a password. It does not grant write permissions
-or alter deletion behavior. Delete still executes immediately when permitted.
+or authorize deletion. Unattended deletion additionally requires `--force`.
 
 Environment defaults are `I4D_READONLY`, `I4D_NO_INPUT`, `I4D_PROFILE`, and
 `I4D_ENABLE_COMMANDS_EXACT`. Boolean values accept `true`/`false` or `1`/`0`.
@@ -217,6 +219,164 @@ Errors identify the restriction responsible. These are local execution controls;
 they do not change the credentials' server permissions or prevent a caller with
 those credentials from using another program.
 
-The CLI and future MCP handlers can use the shared `internal/app` operations and
-`internal/policy` command registry. MCP, dry-run previews, structured error codes,
-and date shortcuts are planned follow-up work, not part of this milestone.
+The CLI and MCP handlers use the shared `internal/app` operations and
+`internal/policy` command registry. Both enforce the same application permissions;
+the MCP server additionally restricts the tools it exposes.
+
+
+## Calendar shortcuts and inspection
+
+```sh
+./bin/i4d events list --calendar bill --today --timezone America/New_York
+./bin/i4d events list --calendar bill --tomorrow
+./bin/i4d events list --calendar bill --days 7
+./bin/i4d events get --calendar bill --path /ACCOUNT/calendars/CALENDAR/EVENT.ics --json
+```
+
+Choose exactly one of `--today`, `--tomorrow`, `--days N`, or the explicit
+`--from`/`--to` pair. `--days` accepts 1–3660 and starts at today's local midnight.
+Shortcuts use calendar days in `--timezone` (default `Local`), including daylight
+saving transitions; they do not assume every day is 24 hours.
+
+`events get` returns the resource path, ETag, and an `events` array with details,
+including descriptions and recurrence rules. A recurring resource may contain a
+master event and exceptions; this command inspects them without expanding them.
+Recurring resources still cannot be edited or deleted. Object reads are limited
+to 10 MiB. Paths must belong directly to the selected calendar.
+
+## Previews and machine-readable output
+
+```sh
+./bin/i4d --dry-run --json events create --calendar bill --summary "Lunch" \
+  --start 2026-10-29 --end 2026-10-30
+./bin/i4d --dry-run events delete --calendar bill \
+  --path /ACCOUNT/calendars/CALENDAR/EVENT.ics
+./bin/i4d events list --calendar bill --today --plain
+./bin/i4d --readonly schema --json
+```
+
+`--dry-run` validates a mutation locally and emits its proposed action and fields.
+It makes **no network requests and requires no credentials**. Its JSON reports
+`dry_run: true`, `validation: "local"`, and `remote_checked: false`. Calendar
+existence, path membership, server permissions, recurrence, and ETags have not
+been checked. It does not generate a new UID or reserve an event path. Previews
+still require permission for the underlying mutation; read-only profiles reject
+mutations even with `--dry-run`.
+
+`--plain` emits TSV with a header, including on empty lists. Tabs, line breaks,
+and control characters in display values become spaces to keep one record per
+line. `--json` preserves original field values. These two output modes are
+mutually exclusive. Existing JSON success shapes remain unchanged; ordinary
+event tables now include a PATH column.
+
+`schema` always emits JSON, with `schema_version`, permitted commands and aliases,
+flags, constraints, output formats, exit codes, and the effective safety policy.
+Flag descriptions come from the same definitions used to parse commands. It
+requires no credentials and does not verify server access. `policy --json`
+remains available for a smaller permissions-only view.
+
+On failure, JSON mode emits an object such as:
+
+```json
+{"error":{"code":6,"class":"permission_denied","message":"command blocked by policy"}}
+```
+
+Human error messages go to stderr. An error envelope is not appended to partial
+stdout output or an MCP protocol stream. Always check the process exit status.
+
+| Exit code | Class | Meaning |
+| --- | --- | --- |
+| 0 | Success | Operation succeeded |
+| 1 | `error` | Unclassified failure |
+| 2 | `usage` | Invalid arguments or configuration flags |
+| 4 | `auth_required` | Server rejected authentication |
+| 5 | `not_found` | Calendar or event not found |
+| 6 | `permission_denied` | Local policy or server denied access |
+| 7 | `rate_limited` | Server returned HTTP 429 |
+| 8 | `retryable` | Network failure, timeout, or server failure |
+| 9 | `conflict` | Concurrent change or resource conflict |
+| 10 | `config` | Required credentials are missing |
+| 11 | `confirmation_required` | Deletion lacks operator authorization |
+| 130 | `cancelled` | Operation interrupted or confirmation declined |
+
+There are no automatic retries. After a timeout on a mutation, inspect the
+calendar before retrying: the server may already have applied the change.
+
+## MCP server
+
+`i4d mcp` serves MCP over stdio. The client launches the binary and uses the
+standard initialize, tools/list, and tools/call protocol. It exposes typed tools,
+not a shell-command bridge. Tool inputs cannot change the account, permissions,
+force flag, dry-run mode, or server limits. Unknown input fields are rejected.
+
+```sh
+# Inspect enabled tools and their schemas without credentials or a running server.
+./bin/i4d --readonly mcp --list-tools
+
+# Serve only calendar reads.
+./bin/i4d --readonly mcp --allow-tool calendars_list,events_list,events_get
+
+# Permit creating/editing events while deletion remains blocked.
+./bin/i4d --profile editor mcp --allow-write
+
+# Explicitly authorize deletion as well.
+./bin/i4d --force mcp --allow-write --allow-delete
+
+# Preview permitted writes without credentials or network activity.
+./bin/i4d --dry-run mcp --allow-write
+```
+
+| Tool | Required startup authorization |
+| --- | --- |
+| `calendars_list` | Read permission; enabled by default |
+| `events_list` | Read permission; enabled by default |
+| `events_get` | Read permission; enabled by default |
+| `events_create` | `--allow-write` and command permission |
+| `events_edit` | `--allow-write` and command permission |
+| `events_delete` | `--allow-write`, `--allow-delete`, and command permission; actual deletion also requires operator `--force` |
+
+`--allow-tool` accepts exact names, comma-separated or repeated. It narrows the
+surface; it cannot grant a forbidden capability. Empty lists and unknown names
+are errors. Profiles and exact command grants still apply. For example, an exact
+read grant for MCP would be `--enable-commands-exact mcp,events.list`. `schema` and
+`policy` remain available regardless of this list. Tools blocked by policy are
+omitted; a configuration that enables no tools fails at startup.
+
+A generic MCP client configuration:
+
+```json
+{
+  "command": "/absolute/path/to/i4d",
+  "args": ["--readonly", "mcp"]
+}
+```
+
+The server inherits `ICLOUD_USERNAME` and `ICLOUD_APP_PASSWORD` from its process
+environment. It never prompts, even without `--no-input`. Credentials are checked
+when a tool needs network access; `--list-tools` and local write previews need
+none. Stdout is reserved for MCP; logs go to stderr. `--plain` is unsupported,
+and `--json` is only accepted with `mcp --list-tools`.
+
+Tool results contain a structured `result` object and a JSON text fallback for
+older clients. Application failures set MCP `isError` and return the same
+`error.code`, `error.class`, and `error.message` fields as the CLI. Invalid
+protocol or schema inputs use the MCP SDK's protocol errors.
+
+`events_list` takes a `calendars` array and the same date-range choices as the CLI.
+Other event tools take one `calendar`; inspection, edit, and delete also take
+`path`. Create/edit accept `summary`, `location`, `description`, `start`, and
+`end`. These are literal values, not filenames. Omitted editable fields are
+preserved; empty location/description clears them.
+
+Each tool call has its own `--timeout` (default 30s); this is not the server's
+lifetime. `--max-results` defaults to 1000 (maximum 10000); list callers may use
+`limit` to narrow it further. Lists return `returned`, `matched`, and `truncated`
+metadata. Truncation is explicit; narrow the range to retrieve fewer events.
+The server bounds returned results, not the number of records the CalDAV server
+may send while answering a query.
+
+`--max-output-bytes` caps each JSON result payload (default 1 MiB, maximum 10 MiB),
+excluding the duplicate text fallback and protocol framing. Oversized read
+results fail with guidance to narrow the request. If a mutation has already
+succeeded but its result is too large, the server returns a compact success with
+`completed: true` and `output_omitted: true` rather than suggesting a retry.

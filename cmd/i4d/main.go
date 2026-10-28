@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"i4dcli/internal/cli"
+	"i4dcli/internal/fault"
 	"io"
 	"os"
 	"os/signal"
@@ -14,7 +15,7 @@ func main() {
 	defer stop()
 	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		os.Exit(fault.ExitCode(err))
 	}
 }
 func run(ctx context.Context, args []string, out, stderr io.Writer) error {

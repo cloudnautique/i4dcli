@@ -14,13 +14,17 @@ import (
 	"time"
 
 	"github.com/emersion/go-ical"
+	"i4dcli/internal/fault"
 )
 
 // Changes contains only the fields to replace. Dates imply all-day events;
 // timestamps must include an offset. Start and End must be changed together.
 type Changes struct {
-	Summary, Location, Description *string
-	Start, End                     string
+	Summary     *string `json:"summary,omitempty"`
+	Location    *string `json:"location,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Start       string  `json:"start,omitempty"`
+	End         string  `json:"end,omitempty"`
 }
 
 func (c Changes) Validate(create bool) error {
@@ -126,10 +130,7 @@ func mutationRequest(ctx context.Context, client *http.Client, method string, ta
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		resp.Body.Close()
-		if resp.StatusCode == http.StatusPreconditionFailed {
-			return nil, fmt.Errorf("event changed on the server or already exists; list events again before retrying")
-		}
-		return nil, fmt.Errorf("%s event: HTTP %d", method, resp.StatusCode)
+		return nil, fault.HTTP(resp.StatusCode)
 	}
 	return resp, nil
 }
@@ -167,7 +168,7 @@ func Mutate(ctx context.Context, client *http.Client, endpoint string, c Calenda
 	}
 	target, err := objectURL(endpoint, c, object)
 	if err != nil {
-		return "", err
+		return "", fault.Usage(err)
 	}
 	if action != "create" {
 		resp, err := mutationRequest(ctx, client, http.MethodGet, target, nil, "")

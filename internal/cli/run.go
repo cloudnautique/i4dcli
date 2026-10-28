@@ -7,207 +7,204 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
 	"i4dcli/internal/app"
 	"i4dcli/internal/calendar"
+	"i4dcli/internal/fault"
 	"i4dcli/internal/policy"
 )
 
-func Run(ctx context.Context, args []string, out, stderr io.Writer) error {
-	normalized, global, err := parseGlobal(args)
-	if err != nil {
-		return err
+type countingWriter struct {
+	io.Writer
+	written int
+}
+
+func (w *countingWriter) Write(b []byte) (int, error) {
+	n, err := w.Writer.Write(b)
+	w.written += n
+	return n, err
+}
+
+func Run(ctx context.Context, args []string, out, stderr io.Writer) (err error) {
+	normalized, g, parseErr := parseGlobal(args)
+	output := &countingWriter{Writer: out}
+	protocol := len(normalized) > 0 && normalized[0] == "mcp"
+	defer func() {
+		// Never append an error envelope to partial output or an MCP protocol stream.
+		if err != nil && g.asJSON && !protocol && output.written == 0 {
+			_ = json.NewEncoder(output).Encode(map[string]any{"error": fault.Describe(err)})
+		}
+	}()
+	if parseErr != nil {
+		return fault.Usage(parseErr)
 	}
-	permissions, err := policy.New(policy.Options{Profile: global.profile, ReadOnly: global.readonly, NoInput: global.noInput, EnabledExact: global.exact})
+	return run(ctx, normalized, g, output, stderr)
+}
+
+func run(ctx context.Context, args []string, g globals, out, stderr io.Writer) error {
+	p, err := policy.New(policy.Options{Profile: g.profile, ReadOnly: g.readonly, NoInput: g.noInput, EnabledExact: g.exact})
 	if err != nil {
-		return err
+		return fault.Usage(err)
 	}
-	args = normalized
 	if len(args) == 0 || (len(args) == 1 && (args[0] == "--help" || args[0] == "-h")) {
-		return printHelp(out, permissions)
+		return printHelp(out, p)
 	}
 	if args[0] == "help" {
 		args = append(args[1:], "--help")
 	}
 	if len(args) == 1 && args[0] == "--help" {
-		return printHelp(out, permissions)
+		return printHelp(out, p)
 	}
-	if args[0] == "policy" {
+	if args[0] == "mcp" {
+		return runMCP(ctx, args[1:], g, p, out, stderr)
+	}
+	if args[0] == "policy" || args[0] == "schema" {
 		if len(args) > 1 {
 			if len(args) == 2 && (args[1] == "--help" || args[1] == "-h") {
-				return printHelp(out, permissions)
+				return printHelp(out, p)
 			}
-			return fmt.Errorf("unexpected policy argument %q", args[1])
+			return fault.New("usage", "unexpected %s argument %q", args[0], args[1])
 		}
-		return printPolicy(out, permissions, global.asJSON)
+		if g.dryRun || g.force {
+			return fault.New("usage", "--dry-run and --force only apply to mutation commands")
+		}
+		if args[0] == "schema" {
+			if g.plain {
+				return fault.New("usage", "schema always emits JSON; --plain is not supported")
+			}
+			return printSchema(out, p)
+		}
+		return printPolicy(out, p, g.asJSON, g.plain)
 	}
 	if (args[0] == "events" || args[0] == "calendars") && (len(args) == 1 || (len(args) == 2 && (args[1] == "--help" || args[1] == "-h"))) {
-		return printHelp(out, permissions, args[0])
+		return printHelp(out, p, args[0])
 	}
 	if len(args) < 2 {
-		return errors.New("expected a command and subcommand (see --help)")
+		return fault.New("usage", "expected a command and subcommand (see --help)")
 	}
-	command, err := policy.Resolve(args[0] + "." + args[1])
+	c, err := policy.Resolve(args[0] + "." + args[1])
 	if err != nil {
+		return fault.Usage(err)
+	}
+	if err = p.Check(c.Name); err != nil {
 		return err
 	}
-	if err := permissions.Check(command.Name); err != nil {
-		return err
-	}
-	parts := strings.Split(command.Name, ".")
-	args[0], args[1] = parts[0], parts[1]
-	flags := flag.NewFlagSet("i4d "+args[0]+" "+args[1], flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	flags.Usage = func() {
-		fmt.Fprintf(stderr, "Usage: i4d %s\n", command.Usage)
-		flags.PrintDefaults()
-		printGlobalHelp(stderr)
-	}
-	username, asJSON, timeout := &global.username, &global.asJSON, &global.timeout
-	var names calendarNames
-	var fromArg, toArg, zone string
-	var verbose bool
-	var changes calendar.Changes
-	var object, summary, location, description string
-	mutation := args[0] == "events" && args[1] != "list"
-	if args[0] == "events" {
-		if !mutation {
-			flags.BoolVar(&verbose, "verbose", false, "show resolved range and per-calendar result counts on stderr")
-
-			flags.StringVar(&fromArg, "from", "", "inclusive start: YYYY-MM-DD or RFC3339 (required)")
-			flags.StringVar(&toArg, "to", "", "exclusive end: YYYY-MM-DD or RFC3339 (required)")
-			flags.StringVar(&zone, "timezone", "Local", "IANA timezone for dates, floating events, and display")
-		}
-		flags.Var(&names, "calendar", "calendar full name (case-insensitive) or exact path; repeat for listing")
-		if mutation {
-			if args[1] != "create" {
-				flags.StringVar(&object, "path", "", "event path from events list --json (required)")
-			}
-			if args[1] != "delete" {
-				flags.StringVar(&summary, "summary", "", "event title")
-				flags.StringVar(&location, "location", "", "event location; empty clears it")
-				flags.StringVar(&description, "description", "", "event description; empty clears it")
-				flags.StringVar(&changes.Start, "start", "", "start: YYYY-MM-DD or RFC3339; requires --end")
-				flags.StringVar(&changes.End, "end", "", "exclusive end, same format as --start")
-			}
-		}
-	}
-	if err := flags.Parse(args[2:]); err != nil {
+	fs, o := commandFlags(c, stderr)
+	if err = fs.Parse(args[2:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		return err
+		return fault.Usage(err)
 	}
-	if flags.NArg() != 0 {
-		return errors.New("unexpected positional arguments")
+	if fs.NArg() != 0 {
+		return fault.New("usage", "unexpected positional arguments")
+	}
+	if err = o.supplied(fs); err != nil {
+		return fault.Usage(err)
+	}
+	mutation := c.Capability == policy.Create || c.Capability == policy.Edit || c.Capability == policy.Delete
+	if g.dryRun && !mutation {
+		return fault.New("usage", "--dry-run only applies to mutations")
+	}
+	if g.force && c.Capability != policy.Delete {
+		return fault.New("usage", "--force only applies to deletion")
 	}
 	var from, to time.Time
 	var loc *time.Location
+	if c.Name == "events.list" {
+		if len(o.names) == 0 {
+			return fault.New("usage", "provide at least one --calendar")
+		}
+		from, to, loc, err = o.span.Resolve(time.Now())
+		if err != nil {
+			return fault.Usage(err)
+		}
+	}
+	if mutation || c.Name == "events.get" {
+		if len(o.names) != 1 {
+			return fault.New("usage", "provide exactly one --calendar")
+		}
+		if c.Name != "events.create" && o.object == "" {
+			return fault.New("usage", "--path is required")
+		}
+	}
+	if c.Name == "events.get" {
+		loc, err = time.LoadLocation(o.span.Timezone)
+		if err != nil {
+			return fault.New("usage", "invalid timezone: %s", err)
+		}
+	}
+	var request app.Mutation
 	if mutation {
-		flags.Visit(func(f *flag.Flag) {
-			switch f.Name {
-			case "summary":
-				changes.Summary = &summary
-			case "location":
-				changes.Location = &location
-			case "description":
-				changes.Description = &description
-			}
-		})
-		if len(names) != 1 {
-			return errors.New("provide exactly one --calendar")
-		}
-		if args[1] != "create" && object == "" {
-			return errors.New("--path is required")
-		}
-		if args[1] != "delete" {
-			if err := changes.Validate(args[1] == "create"); err != nil {
-				return err
-			}
-		}
-	}
-	if args[0] == "events" && !mutation {
-		var err error
-		loc, err = time.LoadLocation(zone)
+		request = app.Mutation{Action: strings.TrimPrefix(c.Name, "events."), Calendar: o.names[0], Path: o.object, Changes: o.changes}
+		request, err = request.Validate(p)
 		if err != nil {
-			return fmt.Errorf("invalid timezone: %w", err)
+			return err
 		}
-		from, err = parseBoundary(fromArg, loc)
-		if err != nil {
-			return fmt.Errorf("--from: %w", err)
-		}
-		to, err = parseBoundary(toArg, loc)
-		if err != nil {
-			return fmt.Errorf("--to: %w", err)
-		}
-		if !from.Before(to) {
-			return errors.New("--to must be later than --from")
-		}
-		if len(names) == 0 {
-			return errors.New("provide at least one --calendar")
-		}
-	}
-	password, err := credentials(*username, permissions.NoInput(), stderr)
-	if err != nil {
-		return err
-	}
-	*username = strings.TrimSpace(*username)
-	ctx, cancel := context.WithTimeout(ctx, *timeout)
-	defer cancel()
-	client := calendar.NewClient(*username, password)
-	defer client.CloseIdleConnections()
-	service := app.New(client, calendar.Endpoint, permissions)
-	if args[0] == "events" {
-		if mutation {
-			path, err := service.Mutate(ctx, names[0], object, args[1], changes)
+		if g.dryRun {
+			plan, err := app.Preview(p, request)
 			if err != nil {
 				return err
 			}
-			if *asJSON {
-				return json.NewEncoder(out).Encode(map[string]string{"action": args[1], "path": path})
-			}
-			_, err = fmt.Fprintf(out, "Event %s succeeded: %s\n", args[1], clean(path))
-			return err
+			return printPlan(out, plan, g)
 		}
-		var report func(calendar.QueryStats)
-		if verbose {
-			fmt.Fprintf(stderr, "Range: [%s, %s), timezone: %s\n", from.Format(time.RFC3339), to.Format(time.RFC3339), loc)
-			report = func(s calendar.QueryStats) {
-				fmt.Fprintf(stderr, "Selected calendar: %q (%s)\n", s.Calendar, clean(s.CalendarPath))
-				fmt.Fprintf(stderr, "Calendar %q: %d objects returned, %d event instances, %d matching range\n", s.Calendar, s.Objects, s.Instances, s.Matched)
+		if c.Capability == policy.Delete {
+			if err = confirmDelete(os.Stdin, stderr, request, g.noInput, g.force); err != nil {
+				return err
 			}
 		}
-		events, err := service.Events(ctx, names, from, to, loc, report)
-		if err != nil {
-			return err
-		}
-		return printEvents(out, events, *asJSON)
 	}
-	calendars, err := service.Calendars(ctx)
+	password, err := credentials(g.username, p.NoInput(), stderr)
 	if err != nil {
 		return err
 	}
-	return printCalendars(out, calendars, *asJSON)
-}
-
-type calendarNames []string
-
-func (n *calendarNames) String() string { return strings.Join(*n, ", ") }
-func (n *calendarNames) Set(s string) error {
-	if strings.TrimSpace(s) == "" {
-		return errors.New("calendar cannot be empty")
+	ctx, cancel := context.WithTimeout(ctx, g.timeout)
+	defer cancel()
+	client := calendar.NewClient(strings.TrimSpace(g.username), password)
+	defer client.CloseIdleConnections()
+	service := app.New(client, calendar.Endpoint, p)
+	switch c.Name {
+	case "calendars.list":
+		calendars, err := service.Calendars(ctx)
+		if err != nil {
+			return err
+		}
+		return printCalendars(out, calendars, g.asJSON, g.plain)
+	case "events.list":
+		var report func(calendar.QueryStats)
+		if o.verbose {
+			fmt.Fprintf(stderr, "Range: [%s, %s), timezone: %s\n", from.Format(time.RFC3339), to.Format(time.RFC3339), loc)
+			report = func(s calendar.QueryStats) {
+				fmt.Fprintf(stderr, "Selected calendar: %q (%s)\nCalendar %q: %d objects returned, %d event instances, %d matching range\n", s.Calendar, clean(s.CalendarPath), s.Calendar, s.Objects, s.Instances, s.Matched)
+			}
+		}
+		events, err := service.Events(ctx, o.names, from, to, loc, report)
+		if err != nil {
+			return err
+		}
+		return printEvents(out, events, g.asJSON, g.plain)
+	case "events.get":
+		object, err := service.Get(ctx, o.names[0], o.object, loc)
+		if err != nil {
+			return err
+		}
+		return printObject(out, object, g)
+	default:
+		path, err := service.Mutate(ctx, request.Calendar, request.Path, request.Action, request.Changes)
+		if err != nil {
+			return err
+		}
+		if g.asJSON {
+			return json.NewEncoder(out).Encode(map[string]string{"action": request.Action, "path": path})
+		}
+		if g.plain {
+			_, err = fmt.Fprintf(out, "ACTION\tPATH\n%s\t%s\n", request.Action, clean(path))
+			return err
+		}
+		_, err = fmt.Fprintf(out, "Event %s succeeded: %s\n", request.Action, clean(path))
+		return err
 	}
-	*n = append(*n, s)
-	return nil
-}
-func parseBoundary(s string, loc *time.Location) (time.Time, error) {
-	if t, err := time.ParseInLocation(time.DateOnly, s, loc); err == nil {
-		return t, nil
-	}
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t, nil
-	}
-	return time.Time{}, errors.New("expected YYYY-MM-DD or RFC3339 timestamp")
 }

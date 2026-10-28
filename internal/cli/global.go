@@ -11,28 +11,22 @@ import (
 )
 
 type globals struct {
-	username          string
-	asJSON            bool
-	timeout           time.Duration
-	readonly, noInput bool
-	profile, exact    string
+	username             string
+	asJSON               bool
+	plain, dryRun, force bool
+	timeout              time.Duration
+	readonly, noInput    bool
+	profile, exact       string
 }
 
 // Extract global flags wherever they occur, without interpreting command flag
 // values (a summary of "--readonly" is text, not a permission flag).
 func parseGlobal(args []string) ([]string, globals, error) {
 	g := globals{}
-	fs := flag.NewFlagSet("i4d", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.StringVar(&g.username, "username", os.Getenv("ICLOUD_USERNAME"), "")
-	fs.BoolVar(&g.asJSON, "json", false, "")
-	fs.DurationVar(&g.timeout, "timeout", 30*time.Second, "")
-	fs.BoolVar(&g.readonly, "readonly", false, "")
-	fs.BoolVar(&g.noInput, "no-input", false, "")
-	fs.StringVar(&g.profile, "profile", "full", "")
-	fs.StringVar(&g.exact, "enable-commands-exact", "", "")
+	fs := globalFlags(&g)
 	globalArgs, rest := []string{}, []string{}
-	localValues := map[string]bool{"calendar": true, "from": true, "to": true, "timezone": true, "path": true, "summary": true, "location": true, "description": true, "start": true, "end": true}
+	requestedJSON := false
+	localValues := map[string]bool{"calendar": true, "from": true, "to": true, "timezone": true, "path": true, "summary": true, "location": true, "description": true, "start": true, "end": true, "days": true, "allow-tool": true, "max-results": true, "max-output-bytes": true}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
@@ -43,13 +37,21 @@ func parseGlobal(args []string) ([]string, globals, error) {
 			rest = append(rest, arg)
 			continue
 		}
-		name, _, equals := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		name, value, equals := strings.Cut(strings.TrimLeft(arg, "-"), "=")
 		if f := fs.Lookup(name); f != nil {
+			if name == "json" {
+				enabled := true
+				if equals {
+					enabled, _ = strconv.ParseBool(value)
+				}
+				requestedJSON = enabled
+				g.asJSON = enabled
+			}
 			globalArgs = append(globalArgs, arg)
 			boolean, ok := f.Value.(interface{ IsBoolFlag() bool })
 			if !equals && !(ok && boolean.IsBoolFlag()) {
 				if i+1 >= len(args) {
-					return nil, g, fmt.Errorf("flag needs an argument: --%s", name)
+					return rest, g, fmt.Errorf("flag needs an argument: --%s", name)
 				}
 				i++
 				globalArgs = append(globalArgs, args[i])
@@ -63,8 +65,10 @@ func parseGlobal(args []string) ([]string, globals, error) {
 		}
 	}
 	if err := fs.Parse(globalArgs); err != nil {
-		return nil, g, err
+		g.asJSON = requestedJSON
+		return rest, g, err
 	}
+
 	// Environment supplies defaults only; explicit flags take precedence.
 	supplied := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { supplied[f.Name] = true })
@@ -77,7 +81,7 @@ func parseGlobal(args []string) ([]string, globals, error) {
 		if value := os.Getenv(item.env); value != "" && !supplied[item.flag] {
 			parsed, err := strconv.ParseBool(value)
 			if err != nil {
-				return nil, g, fmt.Errorf("%s must be a boolean", item.env)
+				return rest, g, fmt.Errorf("%s must be a boolean", item.env)
 			}
 			*item.target = parsed
 		}
@@ -88,8 +92,27 @@ func parseGlobal(args []string) ([]string, globals, error) {
 	if value := os.Getenv("I4D_ENABLE_COMMANDS_EXACT"); value != "" && !supplied["enable-commands-exact"] {
 		g.exact = value
 	}
+	if g.asJSON && g.plain {
+		return rest, g, fmt.Errorf("--json and --plain cannot be combined")
+	}
 	if g.timeout <= 0 {
-		return nil, g, fmt.Errorf("timeout must be positive")
+		return rest, g, fmt.Errorf("timeout must be positive")
 	}
 	return rest, g, nil
+}
+
+func globalFlags(g *globals) *flag.FlagSet {
+	fs := flag.NewFlagSet("i4d", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.StringVar(&g.username, "username", os.Getenv("ICLOUD_USERNAME"), "Apple Account email")
+	fs.BoolVar(&g.asJSON, "json", false, "structured JSON output")
+	fs.BoolVar(&g.plain, "plain", false, "stable TSV output")
+	fs.BoolVar(&g.dryRun, "dry-run", false, "validate and preview a mutation without network requests")
+	fs.BoolVar(&g.force, "force", false, "skip delete confirmation; never overrides permissions")
+	fs.DurationVar(&g.timeout, "timeout", 30*time.Second, "operation or MCP tool timeout")
+	fs.BoolVar(&g.readonly, "readonly", false, "block mutations")
+	fs.BoolVar(&g.noInput, "no-input", false, "never prompt")
+	fs.StringVar(&g.profile, "profile", "full", "readonly, editor, or full")
+	fs.StringVar(&g.exact, "enable-commands-exact", "", "exact permitted command names, comma-separated")
+	return fs
 }

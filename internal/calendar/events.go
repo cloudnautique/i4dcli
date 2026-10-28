@@ -11,6 +11,7 @@ import (
 
 	"github.com/emersion/go-ical"
 	"github.com/emersion/go-webdav/caldav"
+	"i4dcli/internal/fault"
 )
 
 type Event struct {
@@ -43,7 +44,7 @@ func Select(all []Calendar, names []string) ([]Calendar, error) {
 			}
 		}
 		if len(matches) == 0 {
-			return nil, fmt.Errorf("calendar %q not found; run calendars list", name)
+			return nil, fault.New("not_found", "calendar %q not found; run calendars list", name)
 		}
 		if len(matches) > 1 {
 			return nil, fmt.Errorf("calendar %q is ambiguous; select its path instead", name)
@@ -166,6 +167,11 @@ func parseEvent(component ical.Event, c Calendar, path string, loc *time.Locatio
 			return e, time.Time{}, fmt.Errorf("server did not expand recurrence (%s remains)", key)
 		}
 	}
+	return parseEventFields(component, c, path, loc)
+}
+
+func parseEventFields(component ical.Event, c Calendar, path string, loc *time.Location) (Event, time.Time, error) {
+	e := Event{Calendar: c.Name, CalendarPath: c.Path, Path: path}
 	prop := component.Props.Get("DTSTART")
 	if prop == nil {
 		keys := make([]string, 0, len(component.Props))

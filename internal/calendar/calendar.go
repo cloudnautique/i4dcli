@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/emersion/go-webdav/caldav"
+	"i4dcli/internal/fault"
 )
 
 const Endpoint = "https://caldav.icloud.com/"
@@ -99,7 +100,7 @@ func (t authTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := t.base.RoundTrip(r)
 	if err == nil && (resp.StatusCode == 401 || resp.StatusCode == 403) {
 		resp.Body.Close()
-		return nil, fmt.Errorf("iCloud rejected access (HTTP %d); check your Apple Account and app-specific password", resp.StatusCode)
+		return nil, fmt.Errorf("iCloud rejected access; check your Apple Account and app-specific password: %w", fault.HTTP(resp.StatusCode))
 	}
 	return resp, err
 }

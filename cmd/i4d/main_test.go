@@ -46,7 +46,7 @@ func TestMutationArguments(t *testing.T) {
 		{[]string{"events", "edit", "--calendar", "Bill"}, "--path"},
 		{[]string{"events", "edit", "--calendar", "Bill", "--path", "/cal/e.ics"}, "field to edit"},
 		{[]string{"events", "delete", "--calendar", "Bill", "--calendar", "Home", "--path", "/cal/e.ics"}, "exactly one"},
-		{[]string{"events", "delete", "--calendar", "Bill", "--path", "/cal/e.ics"}, "ICLOUD_USERNAME"},
+		{[]string{"events", "delete", "--calendar", "Bill", "--path", "/cal/e.ics", "--force"}, "ICLOUD_USERNAME"},
 		{[]string{"events", "edit", "--calendar", "Bill", "--path", "/cal/e.ics", "--location", ""}, "ICLOUD_USERNAME"},
 	} {
 		var out bytes.Buffer

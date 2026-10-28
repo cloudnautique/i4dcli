@@ -3,11 +3,13 @@ package app
 
 import (
 	"context"
-	"fmt"
+
 	"net/http"
+	"strings"
 	"time"
 
 	"i4dcli/internal/calendar"
+	"i4dcli/internal/fault"
 	"i4dcli/internal/policy"
 )
 
@@ -19,6 +21,7 @@ type Service struct {
 
 func New(client *http.Client, endpoint string, permissions policy.Policy) *Service {
 	copy := *client
+	copy.Transport = fault.Transport{Base: copy.Transport}
 	if permissions.ReadOnly() {
 		copy.Transport = calendar.ReadOnlyTransport{Base: copy.Transport}
 	}
@@ -44,10 +47,15 @@ func (s *Service) Events(ctx context.Context, names []string, from, to time.Time
 		return nil, err
 	}
 	if len(names) == 0 {
-		return nil, fmt.Errorf("provide at least one calendar")
+		return nil, fault.New("usage", "provide at least one calendar")
+	}
+	for _, name := range names {
+		if strings.TrimSpace(name) == "" {
+			return nil, fault.New("usage", "calendar cannot be empty")
+		}
 	}
 	if !from.Before(to) {
-		return nil, fmt.Errorf("end of range must be later than start")
+		return nil, fault.New("usage", "end of range must be later than start")
 	}
 	selected, err := s.selected(ctx, names)
 	if err != nil {
@@ -56,30 +64,27 @@ func (s *Service) Events(ctx context.Context, names []string, from, to time.Time
 	return calendar.Events(ctx, s.client, s.endpoint, selected, from, to, loc, report)
 }
 func (s *Service) Mutate(ctx context.Context, name, object, action string, changes calendar.Changes) (string, error) {
-	c, err := policy.Resolve("events." + action)
+	m, err := (Mutation{Action: action, Calendar: name, Path: object, Changes: changes}).Validate(s.permissions)
 	if err != nil {
 		return "", err
-	}
-	if c.Capability != policy.Create && c.Capability != policy.Edit && c.Capability != policy.Delete {
-		return "", fmt.Errorf("not an event mutation: %s", action)
-	}
-	if err := s.permissions.Check(c.Name); err != nil {
-		return "", err
-	}
-	if c.Capability != policy.Delete {
-		if err := changes.Validate(c.Capability == policy.Create); err != nil {
-			return "", err
-		}
-	}
-	if name == "" {
-		return "", fmt.Errorf("calendar is required")
-	}
-	if c.Capability != policy.Create && object == "" {
-		return "", fmt.Errorf("event path is required")
 	}
 	selected, err := s.selected(ctx, []string{name})
 	if err != nil {
 		return "", err
 	}
-	return calendar.Mutate(ctx, s.client, s.endpoint, selected[0], c.Name[len("events."):], object, changes)
+	return calendar.Mutate(ctx, s.client, s.endpoint, selected[0], m.Action, object, changes)
+}
+
+func (s *Service) Get(ctx context.Context, name, object string, loc *time.Location) (calendar.Object, error) {
+	if err := s.permissions.Check("events.get"); err != nil {
+		return calendar.Object{}, err
+	}
+	if strings.TrimSpace(name) == "" || object == "" {
+		return calendar.Object{}, fault.New("usage", "calendar and event path are required")
+	}
+	selected, err := s.selected(ctx, []string{name})
+	if err != nil {
+		return calendar.Object{}, err
+	}
+	return calendar.Get(ctx, s.client, s.endpoint, selected[0], object, loc)
 }

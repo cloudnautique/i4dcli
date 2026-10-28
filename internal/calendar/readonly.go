@@ -1,7 +1,7 @@
 package calendar
 
 import (
-	"fmt"
+	"i4dcli/internal/fault"
 	"net/http"
 )
 
@@ -13,11 +13,11 @@ func (t ReadOnlyTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	switch req.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions, "PROPFIND", "REPORT":
 	default:
-		return nil, fmt.Errorf("request %s blocked by read-only policy", req.Method)
+		return nil, fault.New("permission_denied", "request %s blocked by read-only policy", req.Method)
 	}
 	for _, name := range []string{"X-HTTP-Method-Override", "X-Method-Override", "X-HTTP-Method"} {
 		if req.Header.Get(name) != "" {
-			return nil, fmt.Errorf("method override blocked by read-only policy")
+			return nil, fault.New("permission_denied", "method override blocked by read-only policy")
 		}
 	}
 	base := t.Base

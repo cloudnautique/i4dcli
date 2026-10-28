@@ -3,6 +3,7 @@ package policy
 
 import (
 	"fmt"
+	"i4dcli/internal/fault"
 	"strings"
 )
 
@@ -26,11 +27,14 @@ type Command struct {
 func Commands() []Command {
 	return []Command{
 		{"calendars.list", Read, "calendars list [options]", nil},
-		{"events.list", Read, "events list --calendar NAME --from DATE --to DATE [options]", nil},
+		{"events.list", Read, "events list --calendar NAME (--today | --tomorrow | --days N | --from DATE --to DATE) [options]", nil},
+		{"events.get", Read, "events get --calendar NAME --path PATH [--timezone ZONE]", nil},
 		{"events.create", Create, "events create --calendar NAME --summary TEXT --start DATE --end DATE [options]", nil},
 		{"events.edit", Edit, "events edit --calendar NAME --path PATH [fields] [options]", []string{"events.update"}},
 		{"events.delete", Delete, "events delete --calendar NAME --path PATH [options]", nil},
 		{"policy", Inspect, "policy [--json]", nil},
+		{"schema", Inspect, "schema [--json]", nil},
+		{"mcp", Read, "mcp [--list-tools] [--allow-tool NAME] [--allow-write] [--allow-delete]", nil},
 	}
 }
 
@@ -116,17 +120,17 @@ func (p Policy) Check(name string) error {
 		return err
 	}
 	if !profileAllows(p.embedded, c.Capability) {
-		return fmt.Errorf("command %q blocked by embedded profile %q", c.Name, p.embedded)
+		return fault.New("permission_denied", "command %q blocked by embedded profile %q", c.Name, p.embedded)
 	}
 	if !profileAllows(p.profile, c.Capability) {
-		return fmt.Errorf("command %q blocked by --profile %s", c.Name, p.profile)
+		return fault.New("permission_denied", "command %q blocked by --profile %s", c.Name, p.profile)
 	}
 	if p.readOnly && !profileAllows("readonly", c.Capability) {
-		return fmt.Errorf("command %q blocked by --readonly", c.Name)
+		return fault.New("permission_denied", "command %q blocked by --readonly", c.Name)
 	}
 	// Policy inspection never grants access to account data and remains available.
 	if c.Capability != Inspect && p.exact != nil && !p.exact[c.Name] {
-		return fmt.Errorf("command %q blocked by --enable-commands-exact", c.Name)
+		return fault.New("permission_denied", "command %q blocked by --enable-commands-exact", c.Name)
 	}
 	return nil
 }
