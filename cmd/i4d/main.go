@@ -29,26 +29,44 @@ func main() {
 
 func run(ctx context.Context, args []string, out, stderr io.Writer) error {
 	if len(args) == 0 || (len(args) == 1 && (args[0] == "--help" || args[0] == "-h")) {
-		fmt.Fprintln(out, "Usage: i4d calendars list [options]\n       i4d events list --calendar NAME [--calendar NAME ...] --from DATE --to DATE [options]\n\nCredentials: ICLOUD_USERNAME and ICLOUD_APP_PASSWORD.\nIf the password is unset, an interactive terminal prompt is used.")
+		fmt.Fprintln(out, "Usage: i4d calendars list [options]\n       i4d events list --calendar NAME [--calendar NAME ...] --from DATE --to DATE [options]\n       i4d events create --calendar NAME --summary TEXT --start DATE --end DATE [options]\n       i4d events edit --calendar NAME --path PATH [--summary TEXT] [--start DATE --end DATE] [options]\n       i4d events delete --calendar NAME --path PATH [options]\n\nCredentials: ICLOUD_USERNAME and ICLOUD_APP_PASSWORD.\nIf the password is unset, an interactive terminal prompt is used.")
 		return nil
 	}
-	if len(args) < 2 || (args[0] != "calendars" && args[0] != "events") || args[1] != "list" {
-		return errors.New("expected: i4d calendars list or i4d events list (see --help)")
+	if len(args) < 2 || (args[0] != "calendars" && args[0] != "events") || (args[1] != "list" && (args[0] != "events" || (args[1] != "create" && args[1] != "edit" && args[1] != "delete"))) {
+		return errors.New("expected: i4d calendars list or i4d events list/create/edit/delete (see --help)")
 	}
-	flags := flag.NewFlagSet("i4d "+args[0]+" list", flag.ContinueOnError)
+	flags := flag.NewFlagSet("i4d "+args[0]+" "+args[1], flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	username := flags.String("username", os.Getenv("ICLOUD_USERNAME"), "Apple Account email address")
 	asJSON := flags.Bool("json", false, "output JSON")
-	timeout := flags.Duration("timeout", 30*time.Second, "timeout for the entire discovery operation")
+	timeout := flags.Duration("timeout", 30*time.Second, "timeout for the entire operation")
 	var names calendarNames
 	var fromArg, toArg, zone string
 	var verbose bool
+	var changes calendar.Changes
+	var object, summary, location, description string
+	mutation := args[0] == "events" && args[1] != "list"
 	if args[0] == "events" {
-		flags.BoolVar(&verbose, "verbose", false, "show resolved range and per-calendar result counts on stderr")
-		flags.Var(&names, "calendar", "calendar full name (case-insensitive) or exact path; repeat for multiple")
-		flags.StringVar(&fromArg, "from", "", "inclusive start: YYYY-MM-DD or RFC3339 (required)")
-		flags.StringVar(&toArg, "to", "", "exclusive end: YYYY-MM-DD or RFC3339 (required)")
-		flags.StringVar(&zone, "timezone", "Local", "IANA timezone for dates, floating events, and display")
+		if !mutation {
+			flags.BoolVar(&verbose, "verbose", false, "show resolved range and per-calendar result counts on stderr")
+
+			flags.StringVar(&fromArg, "from", "", "inclusive start: YYYY-MM-DD or RFC3339 (required)")
+			flags.StringVar(&toArg, "to", "", "exclusive end: YYYY-MM-DD or RFC3339 (required)")
+			flags.StringVar(&zone, "timezone", "Local", "IANA timezone for dates, floating events, and display")
+		}
+		flags.Var(&names, "calendar", "calendar full name (case-insensitive) or exact path; repeat for listing")
+		if mutation {
+			if args[1] != "create" {
+				flags.StringVar(&object, "path", "", "event path from events list --json (required)")
+			}
+			if args[1] != "delete" {
+				flags.StringVar(&summary, "summary", "", "event title")
+				flags.StringVar(&location, "location", "", "event location; empty clears it")
+				flags.StringVar(&description, "description", "", "event description; empty clears it")
+				flags.StringVar(&changes.Start, "start", "", "start: YYYY-MM-DD or RFC3339; requires --end")
+				flags.StringVar(&changes.End, "end", "", "exclusive end, same format as --start")
+			}
+		}
 	}
 	if err := flags.Parse(args[2:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -64,7 +82,30 @@ func run(ctx context.Context, args []string, out, stderr io.Writer) error {
 	}
 	var from, to time.Time
 	var loc *time.Location
-	if args[0] == "events" {
+	if mutation {
+		flags.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "summary":
+				changes.Summary = &summary
+			case "location":
+				changes.Location = &location
+			case "description":
+				changes.Description = &description
+			}
+		})
+		if len(names) != 1 {
+			return errors.New("provide exactly one --calendar")
+		}
+		if args[1] != "create" && object == "" {
+			return errors.New("--path is required")
+		}
+		if args[1] != "delete" {
+			if err := changes.Validate(args[1] == "create"); err != nil {
+				return err
+			}
+		}
+	}
+	if args[0] == "events" && !mutation {
 		var err error
 		loc, err = time.LoadLocation(zone)
 		if err != nil {
@@ -116,6 +157,17 @@ func run(ctx context.Context, args []string, out, stderr io.Writer) error {
 	if args[0] == "events" {
 		selected, err := calendar.Select(calendars, names)
 		if err != nil {
+			return err
+		}
+		if mutation {
+			path, err := calendar.Mutate(ctx, client, calendar.Endpoint, selected[0], args[1], object, changes)
+			if err != nil {
+				return err
+			}
+			if *asJSON {
+				return json.NewEncoder(out).Encode(map[string]string{"action": args[1], "path": path})
+			}
+			_, err = fmt.Fprintf(out, "Event %s succeeded: %s\n", args[1], clean(path))
 			return err
 		}
 		var report func(calendar.QueryStats)

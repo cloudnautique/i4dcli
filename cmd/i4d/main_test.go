@@ -39,3 +39,31 @@ func TestEventArguments(t *testing.T) {
 		}
 	}
 }
+
+func TestMutationArguments(t *testing.T) {
+	t.Setenv("ICLOUD_USERNAME", "")
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"events", "create", "--calendar", "Bill"}, "--summary"},
+		{[]string{"events", "create", "--calendar", "Bill", "--summary", "Title"}, "--start"},
+		{[]string{"events", "edit", "--calendar", "Bill"}, "--path"},
+		{[]string{"events", "edit", "--calendar", "Bill", "--path", "/cal/e.ics"}, "field to edit"},
+		{[]string{"events", "delete", "--calendar", "Bill", "--calendar", "Home", "--path", "/cal/e.ics"}, "exactly one"},
+		{[]string{"events", "delete", "--calendar", "Bill", "--path", "/cal/e.ics"}, "ICLOUD_USERNAME"},
+		{[]string{"events", "edit", "--calendar", "Bill", "--path", "/cal/e.ics", "--location", ""}, "ICLOUD_USERNAME"},
+	} {
+		var out bytes.Buffer
+		err := run(context.Background(), tc.args, &out, &out)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%v: %v, want %s", tc.args, err, tc.want)
+		}
+	}
+	for _, action := range []string{"create", "edit", "delete"} {
+		var out bytes.Buffer
+		if err := run(context.Background(), []string{"events", action, "--help"}, &out, &out); err != nil || !strings.Contains(out.String(), "-calendar") {
+			t.Errorf("help %s: %v", action, err)
+		}
+	}
+}

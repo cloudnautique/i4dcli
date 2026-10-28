@@ -1,8 +1,9 @@
 # i4dcli
 
-A Go CLI for iCloud, starting with read-only calendar discovery. Uses
+A Go CLI for iCloud calendar discovery and event management. Uses
 [go-webdav](https://github.com/emersion/go-webdav) for CalDAV. No Mac or local
-Calendar app is required. Lists calendar collections and events in a date range.
+Calendar app is required. Lists calendar collections and events in a date range,
+and creates, edits, and deletes standalone events.
 
 ## Build and run
 
@@ -79,6 +80,46 @@ For troubleshooting, add `--verbose` to `events list`. Stderr shows the resolved
 range/timezone, selected calendar paths, returned object and event counts, and
 how many events overlap the requested range. It does not print credentials or
 event content. JSON on stdout remains unchanged.
+
+## Create, edit, and delete events
+
+Each write command selects exactly one calendar by name or path. Create a timed
+event with RFC3339 timestamps (including offsets):
+
+```sh
+./bin/i4d events create --calendar "bill" --summary "Lunch" \
+  --start 2026-10-29T12:00:00-04:00 --end 2026-10-29T13:00:00-04:00 \
+  --location "Cafe" --description "Bring notes"
+```
+
+For an all-day event, use dates for both boundaries, for example
+`--start 2026-10-29 --end 2026-10-30` for October 29 only. The end is exclusive
+and must be later than the start. Timed events are stored in UTC.
+
+Use the `path` returned by create or `events list --json` to edit or delete:
+
+```sh
+./bin/i4d events edit --calendar "bill" --path /ACCOUNT/calendars/CALENDAR/EVENT.ics \
+  --summary "Lunch with Sam" --location ""
+./bin/i4d events delete --calendar "bill" --path /ACCOUNT/calendars/CALENDAR/EVENT.ics
+```
+
+Edit accepts `--summary`, `--location`, `--description`, and a paired
+`--start`/`--end`. Omitted fields are preserved, including alarms and custom
+properties. An empty location or description clears that field. The summary
+cannot be blank. To reschedule or switch between timed and all-day, supply both
+boundaries. Event paths must belong directly to the selected calendar.
+
+Delete executes immediately; there is no interactive confirmation. All three
+commands support `--json` (an object with `action` and `path`), `--username`, and
+`--timeout`. Creation refuses to overwrite an existing resource. Edit and delete
+fetch the original object and use its strong ETag in a conditional write; a
+concurrent change causes an error instead of overwriting it. Servers without a
+strong ETag are rejected for these operations.
+
+Recurring events, including individual occurrences, cannot yet be edited or
+deleted. These commands reject them without writing. Creating recurrence rules
+and managing meeting invitations are not supported.
 
 ## Development
 
