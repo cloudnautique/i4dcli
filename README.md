@@ -131,3 +131,76 @@ go vet ./...
 Protocol tests use a local fake CalDAV server; they require no Apple credentials.
 A real account is still needed to validate live iCloud connectivity. The calendar
 adapter is separate from the CLI so it can be reused by a future server.
+
+## Permissions and automation
+
+Global flags work before or after the command. Existing command names and JSON
+success output remain supported; `events update` is an alias for `events edit`.
+Use `i4d help events edit` or `i4d events edit --help` for command options.
+
+```sh
+# Read-only invocation; discovery and event queries still work.
+./bin/i4d --readonly events list --calendar bill \
+  --from 2026-10-28 --to 2026-11-04
+
+# Permit reads and event creation/editing, but no deletion.
+./bin/i4d --profile editor events update --calendar bill \
+  --path /ACCOUNT/calendars/CALENDAR/EVENT.ics --summary "Lunch with Sam"
+
+# Narrow automation to exactly these user operations, without prompts.
+./bin/i4d --no-input --enable-commands-exact calendars.list,events.list \
+  calendars list --json
+
+# Inspect permissions locally, without credentials or network requests.
+./bin/i4d --profile editor --readonly policy --json
+```
+
+| Profile | List calendars/events | Create events | Edit events | Delete events |
+| --- | --- | --- | --- | --- |
+| `readonly` | Yes | No | No | No |
+| `editor` | Yes | Yes | Yes | No |
+| `full` (default) | Yes | Yes | Yes | Yes |
+
+`--readonly` further restricts any profile. Commands denied by a profile or exact
+allowlist fail before credentials are requested or any network activity occurs.
+The shared application layer checks the same policy, and read-only HTTP transport
+blocks mutating requests, including redirects. CalDAV `PROPFIND` and `REPORT`
+remain available for discovery and queries.
+
+Exact command lists use dotted names and accept the `events.update` alias as
+`events.edit`. Parent names and wildcards are rejected. Internal discovery needed
+by an allowed event operation does not require a separate `calendars.list` grant.
+`policy` remains available for inspecting permissions even with an exact list;
+its output lists allowed commands and reasons for blocked commands. Help menus
+show only permitted operations.
+
+`--no-input` requires credentials in the environment (or `--username` for the
+account) and never prompts for a password. It does not grant write permissions
+or alter deletion behavior. Delete still executes immediately when permitted.
+
+Environment defaults are `I4D_READONLY`, `I4D_NO_INPUT`, `I4D_PROFILE`, and
+`I4D_ENABLE_COMMANDS_EXACT`. Boolean values accept `true`/`false` or `1`/`0`.
+Explicit flags override these defaults; an empty exact-list flag clears the
+runtime allowlist. Invalid profile or command names and nonempty lists containing
+only commas/whitespace are rejected.
+
+### Embedded profiles
+
+Build a dedicated binary whose profile cannot be loosened by runtime flags or
+environment variables. Run these commands from the repository root:
+
+```sh
+./scripts/build-profile.sh readonly bin/i4d-readonly
+./scripts/build-profile.sh editor bin/i4d-editor
+./bin/i4d-readonly policy --json
+```
+
+Embedded and runtime permissions intersect: `--profile full`, `--readonly=false`,
+or an exact grant cannot enable a command forbidden by the embedded profile.
+Errors identify the restriction responsible. These are local execution controls;
+they do not change the credentials' server permissions or prevent a caller with
+those credentials from using another program.
+
+The CLI and future MCP handlers can use the shared `internal/app` operations and
+`internal/policy` command registry. MCP, dry-run previews, structured error codes,
+and date shortcuts are planned follow-up work, not part of this milestone.

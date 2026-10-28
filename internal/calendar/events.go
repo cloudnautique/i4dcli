@@ -67,10 +67,11 @@ func Select(all []Calendar, names []string) ([]Calendar, error) {
 }
 
 type QueryStats struct {
-	Calendar  string
-	Objects   int
-	Instances int
-	Matched   int
+	CalendarPath string
+	Calendar     string
+	Objects      int
+	Instances    int
+	Matched      int
 }
 
 // Events requests server-expanded recurrence instances and returns overlapping events.
@@ -112,7 +113,7 @@ func Events(ctx context.Context, client *http.Client, endpoint string, calendars
 		if err != nil {
 			return nil, fmt.Errorf("query calendar %q: %w", c.Name, err)
 		}
-		stats := QueryStats{Calendar: c.Name, Objects: len(objects)}
+		stats := QueryStats{Calendar: c.Name, CalendarPath: c.Path, Objects: len(objects)}
 		for _, obj := range objects {
 			if obj.Data == nil {
 				return nil, fmt.Errorf("missing calendar data in %s", obj.Path)

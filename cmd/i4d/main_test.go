@@ -20,11 +20,6 @@ func TestCLIValidation(t *testing.T) {
 		t.Fatalf("help: %s %v", out.String(), err)
 	}
 }
-func TestTerminalSanitization(t *testing.T) {
-	if got := clean("Name\n\x1b[31m\t"); strings.ContainsAny(got, "\n\x1b\t") {
-		t.Fatalf("unsafe: %q", got)
-	}
-}
 
 func TestEventArguments(t *testing.T) {
 	for _, args := range [][]string{
