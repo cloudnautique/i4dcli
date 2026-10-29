@@ -58,6 +58,9 @@ func run(ctx context.Context, args []string, g globals, out, stderr io.Writer) e
 	if len(args) == 1 && args[0] == "--help" {
 		return printHelp(out, p)
 	}
+	if args[0] == "config" {
+		return runConfig(args[1:], g, out)
+	}
 	if args[0] == "mcp" {
 		return runMCP(ctx, args[1:], g, p, out, stderr)
 	}
@@ -105,6 +108,11 @@ func run(ctx context.Context, args []string, g globals, out, stderr io.Writer) e
 	if err = o.supplied(fs); err != nil {
 		return fault.Usage(err)
 	}
+	account, err := configuredAccount(&g)
+	if err != nil {
+		return err
+	}
+	applyEventDefaults(fs, o, account)
 	mutation := c.Capability == policy.Create || c.Capability == policy.Edit || c.Capability == policy.Delete
 	if g.dryRun && !mutation {
 		return fault.New("usage", "--dry-run only applies to mutations")

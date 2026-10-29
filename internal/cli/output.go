@@ -62,6 +62,7 @@ func clean(s string) string {
 func printGlobalHelp(out io.Writer) {
 	fmt.Fprintln(out, `
 Global options (before or after the command):
+  --account NAME                Named account from XDG config (or I4D_ACCOUNT)
   --username EMAIL              Apple Account email (or ICLOUD_USERNAME)
   --json                        JSON output (including structured errors)
   --plain                       Stable TSV output

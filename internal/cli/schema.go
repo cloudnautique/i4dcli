@@ -48,14 +48,16 @@ func printSchema(out io.Writer, p policy.Policy) error {
 		info := describeFlags(fs)
 		for i := range info {
 			name := info[i].Name
-			info[i].Required = name == "calendar" || name == "path" || (c.Name == "events.create" && (name == "summary" || name == "start" || name == "end"))
+			info[i].Required = name == "path" || (c.Name == "events.create" && (name == "summary" || name == "start" || name == "end"))
 		}
 		constraints := map[string][]string{
-			"events.list":   {"Choose exactly one range: today, tomorrow, days, or the from/to pair.", "days must be 1–3660."},
-			"events.get":    {"Exactly one calendar is required."},
-			"events.create": {"Exactly one calendar is required.", "start and end must share a date or RFC3339 format; end is exclusive and later than start."},
-			"events.edit":   {"Exactly one calendar and at least one changed field are required.", "start and end must be changed together."},
-			"events.delete": {"Exactly one calendar is required.", "Execution requires interactive confirmation or --force; previews do not."},
+			"events.list":   {"Calendar flags are required unless the selected account config supplies defaults.", "Choose exactly one range: today, tomorrow, days, or the from/to pair.", "days must be 1–3660."},
+			"events.get":    {"Exactly one calendar is required, from --calendar or account defaults."},
+			"events.create": {"Exactly one calendar is required, from --calendar or account defaults.", "start and end must share a date or RFC3339 format; end is exclusive and later than start."},
+			"events.edit":   {"Exactly one calendar is required, from --calendar or account defaults; at least one changed field is required.", "start and end must be changed together."},
+			"events.delete": {"Exactly one calendar is required, from --calendar or account defaults.", "Execution requires interactive confirmation or --force; previews do not."},
+			"config.show":   {"Always emits JSON containing path, exists, and validated config; does not resolve account selection. --plain is not supported."},
+			"config.path":   {"Prints the XDG config file path without reading the file. --plain is not supported."},
 			"mcp":           {"allow-delete requires allow-write; execution also requires operator --force.", "Tool permissions intersect command policy; tool calls cannot change server permissions."},
 		}
 		entries = append(entries, entry{c, info, constraints[c.Name]})

@@ -43,6 +43,85 @@ restricted to HTTPS on Apple's CalDAV hostname and numbered CalDAV shards,
 including redirects. `--timeout 30s` bounds the entire network operation.
 Errors go to stderr with a nonzero exit status.
 
+## Saved accounts and defaults
+
+The CLI reads non-secret settings from `$XDG_CONFIG_HOME/i4d/config.json`,
+falling back to `~/.config/i4d/config.json`. This location is used on macOS,
+Linux, and Windows; a relative `XDG_CONFIG_HOME` is ignored, following the
+[XDG base directory specification](https://specifications.freedesktop.org/basedir/latest/).
+It does not search the working directory or system-wide config directories.
+
+```sh
+i4d config path        # Print the location, even before the file exists.
+i4d config show        # Print validated config as JSON; no network access.
+```
+
+Create the directory and edit `config.json` at that path. For example:
+
+```json
+{
+  "version": 1,
+  "default_account": "personal",
+  "accounts": {
+    "personal": {
+      "username": "you@icloud.com",
+      "calendars": ["Home"],
+      "timezone": "America/New_York"
+    },
+    "work": {
+      "username": "work@icloud.com",
+      "calendars": ["Work", "Team"],
+      "timezone": "Europe/London"
+    }
+  }
+}
+```
+
+`default_account` is optional. Select an account with `--account NAME` anywhere
+in the command or `I4D_ACCOUNT`; the flag takes precedence, then the environment,
+then `default_account`. Accounts are not permission profiles: `--profile readonly`,
+`editor`, and `full` retain their existing meaning. Configuration cannot grant
+permissions, enable MCP writes, or authorize deletion.
+
+```sh
+i4d events list --today                       # Uses personal's defaults.
+i4d --account work events list --days 7       # Lists Work and Team.
+i4d --account work events create --calendar Work --summary Lunch \
+  --start 2026-10-29T12:00:00+00:00 --end 2026-10-29T13:00:00+00:00
+```
+
+`--username` overrides `ICLOUD_USERNAME`, which overrides the configured username.
+If the override names a different identity, that account's calendar and timezone
+defaults are ignored to avoid mixing accounts; pass the desired calendar/timezone
+explicitly or select the matching configured account. An explicit blank username
+does not fall back to config. `--calendar` replaces the entire configured calendar
+list; it never appends to it. `--timezone` overrides the configured timezone.
+Without configured defaults, existing command requirements remain unchanged.
+Create, inspect, edit, and delete require exactly one calendar; if the account
+lists several, supply one explicitly. Dates for writes still require explicit
+RFC3339 offsets or all-day dates; config timezone affects queries and display.
+
+Passwords are **never stored in this file**. Continue using `ICLOUD_APP_PASSWORD`
+from your secret manager or the hidden interactive prompt, matching the selected
+account. Switching `--account` does not switch the environment's password.
+Only `version`, `default_account`, and the account fields shown above are accepted;
+unknown fields, invalid timezones, unknown selected accounts, and malformed config
+fail with exit code 10. Files are limited to 1 MiB. An absent file is fine.
+Keep the file private (for example mode `0600` and its directory `0700` on Unix),
+as it contains account names and calendar preferences. `config show` displays
+these non-secret values and whether the file exists; it does not show environment
+credentials or effective permission settings.
+
+Help, `policy`, `schema`, `config path`, and `mcp --list-tools` work even if the
+config file is malformed, so you can inspect the CLI and repair it. `config show`
+validates the file. These inspection commands do not need credentials.
+
+MCP resolves the selected account once at startup, including the configured
+timezone for omitted tool timezone arguments. Tool callers cannot switch accounts.
+MCP calendar arguments remain required, even with configured calendar defaults,
+so every tool call names its destination explicitly. An explicit tool timezone
+overrides the startup default.
+
 ## List events from multiple calendars
 
 ```sh
@@ -54,7 +133,8 @@ Errors go to stderr with a nonzero exit status.
 Repeat `--calendar` to combine calendars. Names match in full, case-insensitively;
 you can also use an exact path from `calendars list`. Repeated selections query
 the calendar once. Ambiguous names require a path; unknown names and task-only
-collections produce errors. At least one calendar is required.
+collections produce errors. At least one calendar is required, supplied explicitly
+or by the selected account defaults.
 
 For an explicit range both boundaries are required: `--from` is inclusive and `--to` exclusive, so the
 example covers October 28 through November 3. Accepts `YYYY-MM-DD` or RFC3339
@@ -431,3 +511,9 @@ are grouped per ecosystem; major updates get separate pull requests. Action
 references are pinned to full commit SHAs, including the GoReleaser action.
 The action installs the latest GoReleaser v2. Dependabot changes go through CI
 and are not automatically merged.
+
+## Planned email support
+
+The [email implementation plan](docs/email-plan.md) describes read-only iCloud
+Mail through IMAP, followed by mailbox organization, drafts, and explicitly
+authorized sending. Email commands are not implemented yet.

@@ -32,6 +32,8 @@ func Commands() []Command {
 		{"events.create", Create, "events create --calendar NAME --summary TEXT --start DATE --end DATE [options]", nil},
 		{"events.edit", Edit, "events edit --calendar NAME --path PATH [fields] [options]", []string{"events.update"}},
 		{"events.delete", Delete, "events delete --calendar NAME --path PATH [options]", nil},
+		{"config.path", Inspect, "config path [--json]", nil},
+		{"config.show", Inspect, "config show [--json]", nil},
 		{"policy", Inspect, "policy [--json]", nil},
 		{"schema", Inspect, "schema [--json]", nil},
 		{"mcp", Read, "mcp [--list-tools] [--allow-tool NAME] [--allow-write] [--allow-delete]", nil},

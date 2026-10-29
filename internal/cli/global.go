@@ -12,6 +12,8 @@ import (
 
 type globals struct {
 	username             string
+	account              string
+	usernameSet          bool
 	asJSON               bool
 	plain, dryRun, force bool
 	timeout              time.Duration
@@ -72,6 +74,7 @@ func parseGlobal(args []string) ([]string, globals, error) {
 	// Environment supplies defaults only; explicit flags take precedence.
 	supplied := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { supplied[f.Name] = true })
+	g.usernameSet = supplied["username"] || os.Getenv("ICLOUD_USERNAME") != ""
 	for _, item := range []struct {
 		flag, env string
 		target    *bool
@@ -104,6 +107,7 @@ func parseGlobal(args []string) ([]string, globals, error) {
 func globalFlags(g *globals) *flag.FlagSet {
 	fs := flag.NewFlagSet("i4d", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	fs.StringVar(&g.account, "account", os.Getenv("I4D_ACCOUNT"), "named account from XDG config (or I4D_ACCOUNT)")
 	fs.StringVar(&g.username, "username", os.Getenv("ICLOUD_USERNAME"), "Apple Account email")
 	fs.BoolVar(&g.asJSON, "json", false, "structured JSON output")
 	fs.BoolVar(&g.plain, "plain", false, "stable TSV output")

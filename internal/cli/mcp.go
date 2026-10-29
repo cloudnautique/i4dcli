@@ -66,6 +66,11 @@ func runMCP(ctx context.Context, args []string, g globals, p policy.Policy, out,
 		}
 		return json.NewEncoder(out).Encode(tools)
 	}
+	account, err := configuredAccount(&g)
+	if err != nil {
+		return err
+	}
+	o.DefaultTimezone = account.Timezone
 	factory := func(context.Context) (*app.Service, func(), error) {
 		password, err := credentials(g.username, true, io.Discard)
 		if err != nil {

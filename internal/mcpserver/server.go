@@ -17,6 +17,7 @@ import (
 )
 
 type Options struct {
+	DefaultTimezone                        string
 	AllowTools                             []string
 	AllowWrite, AllowDelete, Force, DryRun bool
 	Timeout                                time.Duration
@@ -179,6 +180,9 @@ func execute(ctx context.Context, p policy.Policy, o Options, s spec, req mcp.Ca
 	if err = dec.Decode(&in); err != nil {
 		return nil, fault.Usage(err)
 	}
+	if in.Timezone == "" {
+		in.Timezone = o.DefaultTimezone
+	}
 	var from, to time.Time
 	var loc *time.Location
 	var mutation app.Mutation
@@ -265,7 +269,7 @@ func tool(s spec) mcp.Tool {
 		opts = append(opts, mcp.WithInteger("limit", mcp.Min(1), mcp.Max(10000)))
 	}
 	if s.command == "events.list" || s.command == "events.get" {
-		opts = append(opts, mcp.WithString("timezone", mcp.MinLength(1), mcp.MaxLength(128), mcp.Description("IANA timezone; defaults to the server's local timezone")))
+		opts = append(opts, mcp.WithString("timezone", mcp.MinLength(1), mcp.MaxLength(128), mcp.Description("IANA timezone; defaults to the configured account timezone or server local timezone")))
 	}
 	if s.command != "events.list" && s.command != "calendars.list" {
 		opts = append(opts, mcp.WithString("calendar", mcp.Required(), mcp.MinLength(1), mcp.MaxLength(4096)))
