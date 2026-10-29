@@ -61,6 +61,9 @@ func run(ctx context.Context, args []string, g globals, out, stderr io.Writer) e
 	if args[0] == "config" {
 		return runConfig(args[1:], g, out)
 	}
+	if args[0] == "mail" {
+		return runMail(ctx, args[1:], g, p, out, stderr)
+	}
 	if args[0] == "mcp" {
 		return runMCP(ctx, args[1:], g, p, out, stderr)
 	}

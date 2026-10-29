@@ -14,6 +14,8 @@ type globals struct {
 	username             string
 	account              string
 	usernameSet          bool
+	mailAddress          string
+	mailAddressSet       bool
 	asJSON               bool
 	plain, dryRun, force bool
 	timeout              time.Duration
@@ -28,7 +30,7 @@ func parseGlobal(args []string) ([]string, globals, error) {
 	fs := globalFlags(&g)
 	globalArgs, rest := []string{}, []string{}
 	requestedJSON := false
-	localValues := map[string]bool{"calendar": true, "from": true, "to": true, "timezone": true, "path": true, "summary": true, "location": true, "description": true, "start": true, "end": true, "days": true, "allow-tool": true, "max-results": true, "max-output-bytes": true}
+	localValues := map[string]bool{"calendar": true, "from": true, "to": true, "timezone": true, "path": true, "summary": true, "location": true, "description": true, "start": true, "end": true, "days": true, "allow-tool": true, "max-results": true, "max-output-bytes": true, "mailbox": true, "limit": true, "cursor": true, "id": true, "subject": true, "since": true, "before": true}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {
@@ -75,6 +77,7 @@ func parseGlobal(args []string) ([]string, globals, error) {
 	supplied := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { supplied[f.Name] = true })
 	g.usernameSet = supplied["username"] || os.Getenv("ICLOUD_USERNAME") != ""
+	g.mailAddressSet = supplied["mail-address"] || os.Getenv("ICLOUD_MAIL_ADDRESS") != ""
 	for _, item := range []struct {
 		flag, env string
 		target    *bool
@@ -107,6 +110,7 @@ func parseGlobal(args []string) ([]string, globals, error) {
 func globalFlags(g *globals) *flag.FlagSet {
 	fs := flag.NewFlagSet("i4d", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	fs.StringVar(&g.mailAddress, "mail-address", os.Getenv("ICLOUD_MAIL_ADDRESS"), "full iCloud Mail address (or ICLOUD_MAIL_ADDRESS)")
 	fs.StringVar(&g.account, "account", os.Getenv("I4D_ACCOUNT"), "named account from XDG config (or I4D_ACCOUNT)")
 	fs.StringVar(&g.username, "username", os.Getenv("ICLOUD_USERNAME"), "Apple Account email")
 	fs.BoolVar(&g.asJSON, "json", false, "structured JSON output")

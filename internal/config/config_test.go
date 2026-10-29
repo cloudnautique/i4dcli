@@ -88,3 +88,28 @@ func TestInvalidConfig(t *testing.T) {
 		t.Fatal("directory accepted")
 	}
 }
+
+func TestMailAccountConfig(t *testing.T) {
+	for _, tc := range []struct {
+		contents string
+		valid    bool
+	}{
+		{`{"version":1,"accounts":{"mail-only":{"mail":{"address":"a@icloud.com"}}}}`, true},
+		{`{"version":1,"accounts":{"both":{"username":"calendar@example.com","mail":{"address":"a@icloud.com","imap_username":"a","default_mailbox":"Inbox/Personal"}}}}`, true},
+		{`{"version":1,"accounts":{"mail-only":{"mail":{"address":"bad"}}}}`, false},
+		{`{"version":1,"accounts":{"mail-only":{"mail":{"address":"Display <a@icloud.com>"}}}}`, false},
+		{`{"version":1,"accounts":{"mail-only":{"mail":{"address":"a@icloud.com","imap_username":"a\r\nLOGIN"}}}}`, false},
+		{`{"version":1,"accounts":{"mail-only":{"mail":{"address":"a@icloud.com","default_mailbox":"\u0000"}}}}`, false},
+		{`{"version":1,"accounts":{"mail-only":{"mail":{"address":"a@icloud.com","password":"private-password"}}}}`, false},
+		{`{"version":1,"accounts":{"mail-only":{"mail":{"address":"a@icloud.com","host":"example.com"}}}}`, false},
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(tc.contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := Load(path)
+		if (err == nil) != tc.valid {
+			t.Fatalf("%s: %v", tc.contents, err)
+		}
+	}
+}

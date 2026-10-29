@@ -24,10 +24,11 @@ func configuredAccount(g *globals) (config.Account, error) {
 	if err != nil {
 		return config.Account{}, fault.New("config", "%s", err)
 	}
-	// An explicit username must never inherit another identity's destinations.
+	// A calendar username override must not inherit another calendar identity's
+	// destinations. Mail has an independently configured identity.
 	if g.usernameSet {
 		if !strings.EqualFold(strings.TrimSpace(g.username), strings.TrimSpace(account.Username)) {
-			return config.Account{}, nil
+			return config.Account{Mail: account.Mail}, nil
 		}
 	} else {
 		g.username = account.Username

@@ -63,6 +63,7 @@ func printGlobalHelp(out io.Writer) {
 	fmt.Fprintln(out, `
 Global options (before or after the command):
   --account NAME                Named account from XDG config (or I4D_ACCOUNT)
+  --mail-address EMAIL          iCloud Mail address (or ICLOUD_MAIL_ADDRESS)
   --username EMAIL              Apple Account email (or ICLOUD_USERNAME)
   --json                        JSON output (including structured errors)
   --plain                       Stable TSV output
@@ -74,7 +75,8 @@ Global options (before or after the command):
   --profile NAME                readonly, editor, or full (default full)
   --enable-commands-exact LIST   Comma-separated command names, e.g. events.list
 
-Credentials: ICLOUD_USERNAME and ICLOUD_APP_PASSWORD.
+Credentials: ICLOUD_USERNAME for calendars; ICLOUD_MAIL_ADDRESS for mail.
+Both use ICLOUD_APP_PASSWORD (or the hidden interactive prompt).
 Use i4d policy --json to inspect effective permissions.`)
 }
 func printHelp(out io.Writer, permissions policy.Policy, group ...string) error {

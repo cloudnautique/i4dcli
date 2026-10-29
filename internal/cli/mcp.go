@@ -15,6 +15,7 @@ import (
 	"i4dcli/internal/app"
 	"i4dcli/internal/calendar"
 	"i4dcli/internal/fault"
+	"i4dcli/internal/mail"
 	"i4dcli/internal/mcpserver"
 	"i4dcli/internal/policy"
 )
@@ -71,6 +72,13 @@ func runMCP(ctx context.Context, args []string, g globals, p policy.Policy, out,
 		return err
 	}
 	o.DefaultTimezone = account.Timezone
+	o.MailFactory = func(ctx context.Context) (mcpserver.MailClient, error) {
+		opts, err := mailCredentials(g, account, true, io.Discard)
+		if err != nil {
+			return nil, err
+		}
+		return mail.Dial(ctx, opts)
+	}
 	factory := func(context.Context) (*app.Service, func(), error) {
 		password, err := credentials(g.username, true, io.Discard)
 		if err != nil {

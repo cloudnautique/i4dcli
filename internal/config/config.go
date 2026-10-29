@@ -6,17 +6,41 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	netmail "net/mail"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const maxSize = 1 << 20
 
+type Mail struct {
+	Address        string `json:"address"`
+	IMAPUsername   string `json:"imap_username,omitempty"`
+	DefaultMailbox string `json:"default_mailbox,omitempty"`
+}
+
+// Validate checks local settings only; actual mailbox ownership requires IMAP authentication.
+func (m Mail) Validate() error {
+	address, err := netmail.ParseAddress(m.Address)
+	if err != nil || address.Address != m.Address || strings.ContainsAny(m.Address, "\r\n") || len(m.Address) > 320 {
+		return fmt.Errorf("mail.address must be a full email address without a display name")
+	}
+	if strings.TrimSpace(m.IMAPUsername) != m.IMAPUsername || len(m.IMAPUsername) > 320 || strings.IndexFunc(m.IMAPUsername, unicode.IsControl) >= 0 {
+		return fmt.Errorf("mail.imap_username must be a login without whitespace edges or control characters")
+	}
+	if strings.TrimSpace(m.DefaultMailbox) != m.DefaultMailbox || len(m.DefaultMailbox) > 1024 || strings.IndexFunc(m.DefaultMailbox, unicode.IsControl) >= 0 {
+		return fmt.Errorf("mail.default_mailbox must be an exact mailbox name without whitespace edges or control characters")
+	}
+	return nil
+}
+
 type Account struct {
-	Username  string   `json:"username"`
+	Username  string   `json:"username,omitempty"`
+	Mail      *Mail    `json:"mail,omitempty"`
 	Calendars []string `json:"calendars,omitempty"`
 	Timezone  string   `json:"timezone,omitempty"`
 }
@@ -114,8 +138,13 @@ func (f File) validate() error {
 		if !accountName.MatchString(name) || len(name) > 128 {
 			return fmt.Errorf("account names must be 1–128 letters, digits, dots, underscores, or hyphens, starting with a letter or digit")
 		}
-		if strings.TrimSpace(account.Username) == "" {
-			return fmt.Errorf("each account requires a username")
+		if strings.TrimSpace(account.Username) == "" && account.Mail == nil {
+			return fmt.Errorf("each account requires a calendar username or mail settings")
+		}
+		if account.Mail != nil {
+			if err := account.Mail.Validate(); err != nil {
+				return err
+			}
 		}
 		if len(account.Calendars) > 50 {
 			return fmt.Errorf("each account may configure at most 50 calendars")

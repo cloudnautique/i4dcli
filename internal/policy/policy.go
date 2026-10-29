@@ -26,6 +26,10 @@ type Command struct {
 
 func Commands() []Command {
 	return []Command{
+		{"mail.folders.list", Read, "mail folders list [options]", nil},
+		{"mail.messages.list", Read, "mail messages list [--mailbox NAME] [--limit N] [--cursor CURSOR]", nil},
+		{"mail.messages.get", Read, "mail messages get --id ID", nil},
+		{"mail.messages.search", Read, "mail messages search [--mailbox NAME] [filters]", nil},
 		{"calendars.list", Read, "calendars list [options]", nil},
 		{"events.list", Read, "events list --calendar NAME (--today | --tomorrow | --days N | --from DATE --to DATE) [options]", nil},
 		{"events.get", Read, "events get --calendar NAME --path PATH [--timezone ZONE]", nil},

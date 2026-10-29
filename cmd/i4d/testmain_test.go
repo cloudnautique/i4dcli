@@ -17,7 +17,7 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	for _, name := range []string{"I4D_ACCOUNT", "ICLOUD_USERNAME", "ICLOUD_APP_PASSWORD", "I4D_PROFILE", "I4D_READONLY", "I4D_NO_INPUT", "I4D_ENABLE_COMMANDS_EXACT"} {
+	for _, name := range []string{"I4D_ACCOUNT", "ICLOUD_USERNAME", "ICLOUD_MAIL_ADDRESS", "ICLOUD_APP_PASSWORD", "I4D_PROFILE", "I4D_READONLY", "I4D_NO_INPUT", "I4D_ENABLE_COMMANDS_EXACT"} {
 		if err := os.Unsetenv(name); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)

@@ -1,9 +1,10 @@
 # i4dcli
 
-A Go CLI for iCloud calendar discovery and event management. Uses
+A Go CLI for iCloud calendar discovery, event management, and read-only Mail. Uses
 [go-webdav](https://github.com/emersion/go-webdav) for CalDAV. No Mac or local
 Calendar app is required. Lists calendar collections and events in a date range,
-and creates, edits, and deletes standalone events.
+and creates, edits, and deletes standalone events. Mail supports folder discovery,
+paged message listing/search, and bounded message reads through IMAP.
 
 ## Build and run
 
@@ -93,7 +94,8 @@ i4d --account work events create --calendar Work --summary Lunch \
 `--username` overrides `ICLOUD_USERNAME`, which overrides the configured username.
 If the override names a different identity, that account's calendar and timezone
 defaults are ignored to avoid mixing accounts; pass the desired calendar/timezone
-explicitly or select the matching configured account. An explicit blank username
+explicitly or select the matching configured account. This calendar override does
+not change the separately configured mail identity. An explicit blank username
 does not fall back to config. `--calendar` replaces the entire configured calendar
 list; it never appends to it. `--timezone` overrides the configured timezone.
 Without configured defaults, existing command requirements remain unchanged.
@@ -104,8 +106,9 @@ RFC3339 offsets or all-day dates; config timezone affects queries and display.
 Passwords are **never stored in this file**. Continue using `ICLOUD_APP_PASSWORD`
 from your secret manager or the hidden interactive prompt, matching the selected
 account. Switching `--account` does not switch the environment's password.
-Only `version`, `default_account`, and the account fields shown above are accepted;
-unknown fields, invalid timezones, unknown selected accounts, and malformed config
+Only `version`, `default_account`, and documented account fields are accepted;
+accounts may additionally contain the `mail` settings shown below.
+Unknown fields, invalid timezones, unknown selected accounts, and malformed config
 fail with exit code 10. Files are limited to 1 MiB. An absent file is fine.
 Keep the file private (for example mode `0600` and its directory `0700` on Unix),
 as it contains account names and calendar preferences. `config show` displays
@@ -202,6 +205,86 @@ strong ETag are rejected for these operations.
 Recurring events, including individual occurrences, cannot yet be edited or
 deleted. These commands reject them without writing. Creating recurrence rules
 and managing meeting invitations are not supported.
+
+## Read-only iCloud Mail
+
+Configure a separate mail identity within a named account. Calendar `username`
+and mail `address` can differ; a mail-only account may omit `username`:
+
+```json
+{
+  "version": 1,
+  "default_account": "personal",
+  "accounts": {
+    "personal": {
+      "username": "apple-account@example.com",
+      "mail": {
+        "address": "you@icloud.com",
+        "imap_username": "you@icloud.com",
+        "default_mailbox": "INBOX"
+      }
+    }
+  }
+}
+```
+
+`imap_username` defaults to `address`; `default_mailbox` defaults to `INBOX`.
+The optional IMAP login override supports accounts requiring a different login,
+such as the mailbox local part. The address must be a full email address without
+a display name. SMTP settings and sending are not implemented.
+
+For environment-only use, set `ICLOUD_MAIL_ADDRESS` and `ICLOUD_APP_PASSWORD`.
+`--mail-address` overrides the environment, then configured `mail.address`.
+If the override changes the mail identity, the configured IMAP login and default
+mailbox are discarded; login becomes that address and the mailbox becomes INBOX.
+`--username`/`ICLOUD_USERNAME` only affect calendars. As with calendars, the app
+password comes from the environment or a hidden prompt, and `--no-input` requires
+it in the environment. Account selection does not switch saved passwords.
+
+```sh
+i4d --account personal --readonly mail folders list --json
+i4d mail messages list --mailbox INBOX --limit 50 --json
+i4d mail messages list --cursor '<next_cursor>' --json
+i4d mail messages get --id '<id from list or search>' --json
+i4d mail messages search --mailbox INBOX --from sender@example.com \
+  --subject invoice --since 2026-10-01 --before 2026-11-01 --unread --json
+```
+
+These are read operations allowed by all profiles; exact permissions are
+`mail.folders.list`, `mail.messages.list`, `mail.messages.get`, and
+`mail.messages.search`. Denied commands fail before password prompts or network
+activity. `--dry-run` and `--force` do not apply to mail reads.
+
+Mail connects only to Apple's IMAP service with TLS. Mailbox selection is
+read-only and body reads use PEEK, so reading does not mark mail as seen.
+There are no send, mark, move, delete, or attachment-download commands.
+
+List/search return a page with `messages`, `returned`, optional `next_cursor`,
+and `truncated`. The default limit is 50, maximum 100. Messages are ordered by
+descending mailbox UID (insertion order), not the sender's Date header.
+`next_cursor` means another page is available; `truncated` means a scan safety
+limit was reached. There is no promised exact total count. New arrivals do not
+shift the cursor's upper UID boundary, though deletions may remove results.
+For search continuation, the cursor retains the original filters. Omit them or
+repeat them with `--cursor`; conflicting nonempty filters or mailbox are rejected. Cursors and IDs are opaque and bound to the
+account and mailbox UIDVALIDITY; stale references fail instead of identifying
+another message. A cursor retains its mailbox even if the configured default
+changes. Without a cursor, `--mailbox` overrides the configured default.
+
+Search combines supplied `from`, `to`, `subject`, `since`, `before`, and `unread`
+filters with AND. Dates use `YYYY-MM-DD` and IMAP internal-date semantics:
+`since` includes the day, `before` excludes it. Search does not fetch message bodies.
+`get` fetches bounded body text and attachment metadata; HTML is returned as inert
+text, without fetching images, opening links, or writing attachments. Oversized
+or malformed bodies fail explicitly; successful reads currently return
+`body_truncated: false`. Raw bodies are limited to 2 MiB and decoded content to
+1 MiB, with MIME nesting and part limits. Email content is untrusted input,
+including when returned to an MCP client.
+
+JSON preserves message field values. Human tables and `--plain` TSV replace
+control characters with spaces, including inside message bodies. Page cursors
+and scan-limit notices go to stderr in human/TSV mode; JSON includes them in the
+page object. `--timeout` bounds the whole CLI mail operation.
 
 ## Development
 
@@ -411,9 +494,21 @@ force flag, dry-run mode, or server limits. Unknown input fields are rejected.
 | `calendars_list` | Read permission; enabled by default |
 | `events_list` | Read permission; enabled by default |
 | `events_get` | Read permission; enabled by default |
+| `mail_folders_list` | Read permission; enabled by default |
+| `mail_messages_list` | Read permission; enabled by default |
+| `mail_messages_get` | Read permission; enabled by default |
+| `mail_messages_search` | Read permission; enabled by default |
 | `events_create` | `--allow-write` and command permission |
 | `events_edit` | `--allow-write` and command permission |
 | `events_delete` | `--allow-write`, `--allow-delete`, and command permission; actual deletion also requires operator `--force` |
+
+Read-only MCP now includes both calendar and mail tools. To retain a calendar-only
+surface, explicitly pass `--allow-tool calendars_list,events_list,events_get`.
+Mail tools use the startup account's separate mail identity. Tool callers cannot
+change accounts, hosts, or credentials. For new mail list/search queries, MCP
+defaults to INBOX; the configured `default_mailbox` is a CLI default only. Pass
+an explicit mailbox to MCP when needed. Mail IDs/cursors and search filters have
+the same semantics as the CLI; `mail_messages_get` takes `id`.
 
 `--allow-tool` accepts exact names, comma-separated or repeated. It narrows the
 surface; it cannot grant a forbidden capability. Empty lists and unknown names
@@ -431,7 +526,7 @@ A generic MCP client configuration:
 }
 ```
 
-The server inherits `ICLOUD_USERNAME` and `ICLOUD_APP_PASSWORD` from its process
+The server inherits `ICLOUD_USERNAME`, `ICLOUD_MAIL_ADDRESS`, and `ICLOUD_APP_PASSWORD` from its process
 environment. It never prompts, even without `--no-input`. Credentials are checked
 when a tool needs network access; `--list-tools` and local write previews need
 none. Stdout is reserved for MCP; logs go to stderr. `--plain` is unsupported,
@@ -512,8 +607,8 @@ references are pinned to full commit SHAs, including the GoReleaser action.
 The action installs the latest GoReleaser v2. Dependabot changes go through CI
 and are not automatically merged.
 
-## Planned email support
+## Email roadmap
 
-The [email implementation plan](docs/email-plan.md) describes read-only iCloud
-Mail through IMAP, followed by mailbox organization, drafts, and explicitly
-authorized sending. Email commands are not implemented yet.
+Read-only iCloud Mail through IMAP is implemented in the CLI and MCP server.
+The [email implementation plan](docs/email-plan.md) describes the remaining
+mailbox organization, drafts, and explicitly authorized sending milestones.

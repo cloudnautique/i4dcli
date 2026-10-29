@@ -1,9 +1,10 @@
 # Email implementation plan
 
-Status: proposal, researched 2026-10-29. No email commands, credentials, or remote
-mailbox changes are introduced by this document. The first deliverable should be
-read-only iCloud Mail access through both the CLI and MCP. Sending is a separate
-milestone because SMTP acceptance and retry behavior differ from calendar writes.
+Status: read-only IMAP CLI and MCP implemented on 2026-10-29. Folders,
+message listing, reading, and typed search are available; see README for current
+configuration and limits. Fake-server tests and cross-platform builds pass.
+Live iCloud interoperability still requires account validation. Mailbox changes,
+drafts, sending, and persistent sync below remain proposed future milestones.
 
 ## Verified starting points
 
