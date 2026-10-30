@@ -676,7 +676,7 @@ generated notes and these assets:
 | Windows | `arm64`, `x86_64` | `.zip` |
 
 Names follow `i4d_v1.2.3_linux_x86_64.tar.gz`. Each archive contains `i4d` (or
-`i4d.exe`) and the README. `SHA256SUMS` contains checksums of all six archives.
+`i4d.exe`) the README, and LICENSE. `SHA256SUMS` contains checksums of all six archives.
 Go calls x86_64 `amd64`; the release filenames use `x86_64`.
 Prerelease tags such as `v1.2.3-rc.1` create prereleases. Only tag runs publish
 release assets; branch and pull request workflows do not upload artifacts.
@@ -707,3 +707,7 @@ Mail reads, organization, drafts, attachments, and explicit sending are implemen
 in the CLI and MCP server. The [email implementation plan](docs/email-plan.md)
 records the architecture and deferred background synchronization/cache work.
 Live Apple-account interoperability still needs a deliberately supplied test account.
+
+## License
+
+[MIT](LICENSE) — Copyright (c) 2026 Bill Maxwell.
