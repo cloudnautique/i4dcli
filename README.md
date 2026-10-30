@@ -208,8 +208,14 @@ and managing meeting invitations are not supported.
 
 ## iCloud Mail
 
-Configure a separate mail identity within a named account. Calendar `username`
-and mail `address` can differ; a mail-only account may omit `username`:
+Mail automatically uses the resolved account username when it ends in
+`@icloud.com`, `@me.com`, or `@mac.com`. For these accounts, the same
+`ICLOUD_USERNAME` and `ICLOUD_APP_PASSWORD` work for calendar and mail; a second
+address setting is optional. This fallback applies to CLI and MCP.
+
+Apple Account logins using another domain may differ from the mailbox address.
+For those, configure `mail.address` or set `ICLOUD_MAIL_ADDRESS`. A separate mail
+identity also lets you choose an alias; a mail-only account may omit `username`:
 
 ```json
 {
@@ -235,11 +241,15 @@ a display name. Optional `smtp_username` defaults to `address` and must be a ful
 email address. SMTP connects to Apple on port 587 and requires verified STARTTLS
 before authentication. The configured `address` supplies the From identity.
 
-For environment-only use, set `ICLOUD_MAIL_ADDRESS` and `ICLOUD_APP_PASSWORD`.
-`--mail-address` overrides the environment, then configured `mail.address`.
+For environment-only use, set `ICLOUD_USERNAME` and `ICLOUD_APP_PASSWORD` for
+Apple mail domains, or supply `ICLOUD_MAIL_ADDRESS` for a different mailbox.
+Precedence is `--mail-address`, `ICLOUD_MAIL_ADDRESS`, configured `mail.address`,
+then an eligible account username. An explicitly blank mail-address flag fails
+instead of falling back.
 If the override changes the mail identity, the configured IMAP login and default
 mailbox are discarded; login becomes that address and the mailbox becomes INBOX.
-`--username`/`ICLOUD_USERNAME` only affect calendars. As with calendars, the app
+An explicit mail identity takes precedence over `--username`/`ICLOUD_USERNAME`.
+As with calendars, the app
 password comes from the environment or a hidden prompt, and `--no-input` requires
 it in the environment. Account selection does not switch saved passwords.
 

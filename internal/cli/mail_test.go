@@ -67,8 +67,9 @@ func TestMailIdentityAndCredentialPrecedence(t *testing.T) {
 	}
 }
 
-func TestMailDoesNotInferCalendarIdentity(t *testing.T) {
+func TestMailRequiresAddressForExternalAccountLogin(t *testing.T) {
 	installConfig(t, exampleConfig)
+	t.Setenv("ICLOUD_USERNAME", "login@example.com")
 	t.Setenv("ICLOUD_MAIL_ADDRESS", "")
 	_, g, _ := parseGlobal(nil)
 	account, err := configuredAccount(&g)
@@ -174,5 +175,39 @@ func TestMailOutputAndPagingMetadata(t *testing.T) {
 	out.Reset()
 	if err := printMailFolders(&out, nil, globals{asJSON: true}); err != nil || out.String() != "[]\n" {
 		t.Fatalf("%s %v", out.String(), err)
+	}
+}
+
+func TestMailInfersAppleAccountAddress(t *testing.T) {
+	installConfig(t, exampleConfig)
+	for _, login := range []string{"person@icloud.com", "person@me.com", "person@mac.com", "person@ICLOUD.COM"} {
+		t.Setenv("ICLOUD_USERNAME", login)
+		_, g, err := parseGlobal(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		account, err := configuredAccount(&g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		settings, err := mailSettings(g, account)
+		if err != nil || settings.Address != login || settings.IMAPUsername != login || settings.SMTPUsername != login {
+			t.Fatalf("%+v %v", settings, err)
+		}
+	}
+	t.Setenv("ICLOUD_USERNAME", "")
+	_, g, _ := parseGlobal(nil)
+	account, err := configuredAccount(&g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := mailSettings(g, account)
+	if err != nil || settings.Address != "home@icloud.com" {
+		t.Fatalf("%+v %v", settings, err)
+	}
+	_, g, _ = parseGlobal([]string{"--mail-address="})
+	account, _ = configuredAccount(&g)
+	if _, err = mailSettings(g, account); fault.ExitCode(err) != 10 {
+		t.Fatal("explicit blank mail address inferred")
 	}
 }

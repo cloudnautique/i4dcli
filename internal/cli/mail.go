@@ -26,8 +26,21 @@ func mailSettings(g globals, account config.Account) (config.Mail, error) {
 		}
 		settings.Address = g.mailAddress
 	}
+	if settings.Address == "" && !g.mailAddressSet {
+		login := strings.TrimSpace(g.username)
+		if login == "" && !g.usernameSet {
+			login = strings.TrimSpace(account.Username)
+		}
+		_, domain, ok := strings.Cut(login, "@")
+		if ok {
+			switch strings.ToLower(domain) {
+			case "icloud.com", "me.com", "mac.com":
+				settings.Address = login
+			}
+		}
+	}
 	if settings.Address == "" {
-		return config.Mail{}, fault.New("config", "configure account mail.address, set ICLOUD_MAIL_ADDRESS, or pass --mail-address; the calendar username is not a mail identity")
+		return config.Mail{}, fault.New("config", "set mail.address, ICLOUD_MAIL_ADDRESS, or --mail-address; an iCloud mail address cannot be inferred from this account login")
 	}
 	if err := settings.Validate(); err != nil {
 		return config.Mail{}, fault.New("config", "%s", err)
