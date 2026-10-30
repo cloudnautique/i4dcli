@@ -75,7 +75,8 @@ Global options (before or after the command):
   --profile NAME                readonly, editor, or full (default full)
   --enable-commands-exact LIST   Comma-separated command names, e.g. events.list
 
-Credentials: ICLOUD_USERNAME for calendars; ICLOUD_MAIL_ADDRESS for mail.
+Credentials: ICLOUD_USERNAME for calendars and contacts.
+Mail reuses Apple-domain logins; ICLOUD_MAIL_ADDRESS optionally overrides it.
 Both use ICLOUD_APP_PASSWORD (or the hidden interactive prompt).
 Use i4d policy --json to inspect effective permissions.`)
 }

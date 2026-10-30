@@ -73,7 +73,7 @@ func TestDefaultToolSurfaceAndSchemaValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tools.Tools) != 9 {
+	if len(tools.Tools) != 13 {
 		t.Fatalf("tools %+v", tools.Tools)
 	}
 	for _, tool := range tools.Tools {
@@ -106,7 +106,7 @@ func TestPolicyIntersectionAndSelection(t *testing.T) {
 	for _, tc := range []struct {
 		profile string
 		want    int
-	}{{"readonly", 9}, {"editor", 14}, {"full", 19}} {
+	}{{"readonly", 13}, {"editor", 20}, {"full", 26}} {
 		p, _ := policy.New(policy.Options{Profile: tc.profile})
 		o := options()
 		o.AllowWrite = true

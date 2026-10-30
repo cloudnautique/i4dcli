@@ -64,6 +64,12 @@ func run(ctx context.Context, args []string, g globals, out, stderr io.Writer) e
 	if args[0] == "mail" {
 		return runMail(ctx, args[1:], g, p, out, stderr)
 	}
+	if args[0] == "contacts" || args[0] == "addressbooks" {
+		return runContacts(ctx, args, g, p, out, stderr)
+	}
+	if args[0] == "events" && len(args) > 1 && (args[1] == "invite" || args[1] == "respond" || args[1] == "cancel") {
+		return runCalendarScheduling(ctx, args[1:], g, p, out, stderr)
+	}
 	if args[0] == "mcp" {
 		return runMCP(ctx, args[1:], g, p, out, stderr)
 	}
@@ -115,7 +121,7 @@ func run(ctx context.Context, args []string, g globals, out, stderr io.Writer) e
 	if err != nil {
 		return err
 	}
-	applyEventDefaults(fs, o, account)
+	applyCalendarDefaults(fs, o, account)
 	mutation := c.Capability == policy.Create || c.Capability == policy.Edit || c.Capability == policy.Delete
 	if g.dryRun && !mutation {
 		return fault.New("usage", "--dry-run only applies to mutations")

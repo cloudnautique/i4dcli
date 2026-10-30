@@ -3,12 +3,13 @@
 A Go CLI for iCloud calendar discovery, event management, and Mail. Uses
 [go-webdav](https://github.com/emersion/go-webdav) for CalDAV. No Mac or local
 Calendar app is required. Lists calendar collections and events in a date range,
-and creates, edits, and deletes standalone events. Mail supports folder discovery,
+and manages standalone and recurring events, invitations, and CardDAV contacts.
+Mail supports folder discovery,
 paged reads/search, flags and moves, drafts, attachments, and SMTP submission.
 
 ## Build and run
 
-Requires Go 1.25.5 or newer (the pinned MCP library’s minimum).
+Requires Go 1.26 or newer.
 
 ```sh
 make
@@ -202,9 +203,17 @@ fetch the original object and use its strong ETag in a conditional write; a
 concurrent change causes an error instead of overwriting it. Servers without a
 strong ETag are rejected for these operations.
 
-Recurring events, including individual occurrences, cannot yet be edited or
-deleted. These commands reject them without writing. Creating recurrence rules
-and managing meeting invitations are not supported.
+Recurring event writes use explicit series or occurrence scopes. Invitations,
+responses, and cancellations use separately authorized scheduling commands.
+See [Recurring events and invitations](docs/calendar.md) for examples and limits.
+
+## Contacts
+
+Discover address books and list, search, inspect, create, edit, or delete contacts
+through CardDAV using the same configured account username and app-specific
+password. Contact writes use conditional requests and preserve unmodified vCard
+properties. CLI and MCP enforce the same permission profiles and write gates.
+See [Contacts](docs/contacts.md) for setup, examples, fields, and limits.
 
 ## iCloud Mail
 
@@ -393,7 +402,7 @@ formatting without rewriting files. Staticcheck is pinned in the Makefile and
 runs through `go run`, so no separate installation is required; the first run
 needs network access. Its current version requires Go 1.26+, which Go can fetch
 automatically when toolchain auto-selection is enabled. The application itself
-requires Go 1.25.5+. Race tests require a supported platform and C toolchain.
+requires Go 1.26+. Race tests require a supported platform and C toolchain.
 
 Override the output path with `make BINARY=/path/to/i4d` or the Go executable
 with `make GO=/path/to/go`.
@@ -493,7 +502,7 @@ saving transitions; they do not assume every day is 24 hours.
 `events get` returns the resource path, ETag, and an `events` array with details,
 including descriptions and recurrence rules. A recurring resource may contain a
 master event and exceptions; this command inspects them without expanding them.
-Recurring resources still cannot be edited or deleted. Object reads are limited
+Recurring resources require an explicit series or occurrence scope to edit or delete. Object reads are limited
 to 10 MiB. Paths must belong directly to the selected calendar.
 
 ## Previews and machine-readable output

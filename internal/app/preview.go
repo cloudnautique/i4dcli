@@ -32,6 +32,9 @@ func (m Mutation) Validate(p policy.Policy) (Mutation, error) {
 	if c.Capability != policy.Create && m.Path == "" {
 		return m, fault.New("usage", "event path is required")
 	}
+	if err := m.Changes.ValidateScope(); err != nil {
+		return m, fault.Usage(err)
+	}
 	if c.Capability != policy.Delete {
 		if err := m.Changes.Validate(c.Capability == policy.Create); err != nil {
 			return m, fault.Usage(err)

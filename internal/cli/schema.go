@@ -27,7 +27,7 @@ func describeFlags(fs *flag.FlagSet) []flagInfo {
 		if getter, ok := f.Value.(flag.Getter); ok {
 			kind = reflect.TypeOf(getter.Get()).String()
 		}
-		result = append(result, flagInfo{Name: f.Name, Type: kind, Default: f.DefValue, Description: f.Usage, Repeatable: f.Name == "calendar" || f.Name == "allow-tool" || f.Name == "attach" || f.Name == "cc" || f.Name == "bcc"})
+		result = append(result, flagInfo{Name: f.Name, Type: kind, Default: f.DefValue, Description: f.Usage, Repeatable: f.Name == "calendar" || f.Name == "allow-tool" || f.Name == "attach" || f.Name == "cc" || f.Name == "bcc" || f.Name == "attendee" || f.Name == "email" || f.Name == "phone" || f.Name == "url"})
 	})
 	return result
 }
@@ -46,6 +46,9 @@ func printSchema(out io.Writer, p policy.Policy) error {
 		if strings.HasPrefix(c.Name, "mail.") {
 			fs, _ = mailFlags(c, io.Discard)
 		}
+		if strings.HasPrefix(c.Name, "contacts.") || c.Name == "addressbooks.list" {
+			fs, _ = contactFlags(c, io.Discard)
+		}
 		if c.Name == "mcp" {
 			fs, _ = mcpFlags(io.Discard)
 		}
@@ -55,14 +58,24 @@ func printSchema(out io.Writer, p policy.Policy) error {
 			if name == "to" && (c.Name == "mail.send" || c.Name == "mail.forward" || c.Name == "mail.drafts.create" || c.Name == "mail.drafts.edit") {
 				info[i].Repeatable = true
 			}
-			info[i].Required = name == "path" || name == "id" || (c.Name == "mail.attachments.get" && (name == "attachment" || name == "output")) || (c.Name == "mail.messages.move" && name == "destination") || (c.Name == "events.create" && (name == "summary" || name == "start" || name == "end"))
+			info[i].Required = (name == "partstat" && c.Name == "events.respond") || (name == "addressbook" && strings.HasPrefix(c.Name, "contacts.")) || (name == "name" && c.Name == "contacts.create") || (name == "query" && c.Name == "contacts.search") || (name == "path" && c.Name != "events.invite") || name == "id" || (c.Name == "mail.attachments.get" && (name == "attachment" || name == "output")) || (c.Name == "mail.messages.move" && name == "destination") || (c.Name == "events.create" && (name == "summary" || name == "start" || name == "end"))
 		}
 		constraints := map[string][]string{
+			"addressbooks.list":    {"Discovers address books without reading contact content."},
+			"contacts.list":        {"Explicit addressbook is required; limit must be 1–1000."},
+			"contacts.search":      {"Explicit addressbook and query are required; limit must be 1–1000."},
+			"contacts.get":         {"Explicit addressbook and contact path are required."},
+			"contacts.create":      {"Explicit addressbook and name are required; creates a new contact without overwriting."},
+			"contacts.edit":        {"Explicit addressbook and path are required; supplied email/phone/url lists replace existing lists; use clear flags to remove values."},
+			"contacts.delete":      {"Explicit addressbook and path are required; deletion requires confirmation or force."},
+			"events.invite":        {"Creates an invitation without path, or updates an existing organizer-owned invitation with path.", "New invitations require summary/start/end and attendee recipients; confirmation or force required.", "Omitted organizer is discovered from authenticated principal addresses; explicit identity must be principal-owned."},
+			"events.respond":       {"Requires path and partstat ACCEPTED, DECLINED, or TENTATIVE; attendee identity must belong to the authenticated principal.", "Execution requires confirmation or force; readonly/editor profiles do not grant sending."},
+			"events.cancel":        {"Cancels an organizer-owned event or occurrence; confirmation or force required."},
 			"events.list":          {"Calendar flags are required unless the selected account config supplies defaults.", "Choose exactly one range: today, tomorrow, days, or the from/to pair.", "days must be 1–3660."},
 			"events.get":           {"Exactly one calendar is required, from --calendar or account defaults."},
-			"events.create":        {"Exactly one calendar is required, from --calendar or account defaults.", "start and end must share a date or RFC3339 format; end is exclusive and later than start."},
-			"events.edit":          {"Exactly one calendar is required, from --calendar or account defaults; at least one changed field is required.", "start and end must be changed together."},
-			"events.delete":        {"Exactly one calendar is required, from --calendar or account defaults.", "Execution requires interactive confirmation or --force; previews do not."},
+			"events.create":        {"rrule is optional; recurrence mutations use explicit series/occurrence scope.", "Exactly one calendar is required, from --calendar or account defaults.", "start and end must share a date or RFC3339 format; end is exclusive and later than start."},
+			"events.edit":          {"Recurring resources require scope=series or scope=occurrence with the original recurrence-id.", "Exactly one calendar is required, from --calendar or account defaults; at least one changed field is required.", "start and end must be changed together."},
+			"events.delete":        {"Recurring resources require explicit series or occurrence scope; occurrence deletion preserves other instances.", "Exactly one calendar is required, from --calendar or account defaults.", "Execution requires interactive confirmation or --force; previews do not."},
 			"mail.folders.list":    {"Read-only IMAP folder discovery; requires a configured mail identity."},
 			"mail.messages.list":   {"limit must be 1–100; order is descending UID.", "New queries default to the account mailbox or INBOX; a cursor preserves its original mailbox.", "next_cursor indicates another page; truncated indicates a scan safety limit."},
 			"mail.messages.get":    {"id is an opaque account/mailbox/UIDVALIDITY/UID reference returned by list/search.", "Bodies use PEEK and attachments are metadata only."},

@@ -34,7 +34,7 @@ func TestMCPStdio(t *testing.T) {
 		t.Fatal(err)
 	}
 	tools, err := c.ListTools(ctx, mcp.ListToolsRequest{})
-	if err != nil || len(tools.Tools) != 14 {
+	if err != nil || len(tools.Tools) != 20 {
 		t.Fatalf("tools %v %v", tools, err)
 	}
 	req := mcp.CallToolRequest{}

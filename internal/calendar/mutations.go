@@ -14,20 +14,50 @@ import (
 	"time"
 
 	"github.com/emersion/go-ical"
+	"github.com/teambition/rrule-go"
 	"i4dcli/internal/fault"
 )
 
 // Changes contains only the fields to replace. Dates imply all-day events;
 // timestamps must include an offset. Start and End must be changed together.
 type Changes struct {
-	Summary     *string `json:"summary,omitempty"`
-	Location    *string `json:"location,omitempty"`
-	Description *string `json:"description,omitempty"`
-	Start       string  `json:"start,omitempty"`
-	End         string  `json:"end,omitempty"`
+	Summary      *string `json:"summary,omitempty"`
+	Location     *string `json:"location,omitempty"`
+	Description  *string `json:"description,omitempty"`
+	Start        string  `json:"start,omitempty"`
+	End          string  `json:"end,omitempty"`
+	RRule        *string `json:"rrule,omitempty"`
+	Scope        string  `json:"scope,omitempty"`
+	RecurrenceID string  `json:"recurrence_id,omitempty"`
+	Timezone     string  `json:"timezone,omitempty"`
 }
 
 func (c Changes) Validate(create bool) error {
+	if err := c.ValidateScope(); err != nil {
+		return err
+	}
+	if create && c.Scope == "occurrence" {
+		return fmt.Errorf("new events cannot have occurrence scope")
+	}
+	if c.RRule != nil {
+		if err := validateRule(*c.RRule); err != nil {
+			return err
+		}
+	}
+	if create && c.Timezone != "" && c.Timezone != "UTC" && c.RRule != nil && *c.RRule != "" {
+		rule, _ := rrule.StrToROption(*c.RRule)
+		if rule != nil && rule.Count == 0 && rule.Until.IsZero() {
+			return fmt.Errorf("new timezone recurrence requires finite COUNT or UNTIL")
+		}
+	}
+	if c.Timezone != "" {
+		if _, err := time.LoadLocation(c.Timezone); err != nil {
+			return fmt.Errorf("timezone must be an IANA timezone")
+		}
+		if c.Start == "" {
+			return fmt.Errorf("timezone requires start and end")
+		}
+	}
 	if create && (c.Summary == nil || strings.TrimSpace(*c.Summary) == "") {
 		return fmt.Errorf("--summary is required and cannot be blank")
 	}
@@ -40,7 +70,7 @@ func (c Changes) Validate(create bool) error {
 			return err
 		}
 	}
-	if !create && c.Summary == nil && c.Location == nil && c.Description == nil && c.Start == "" && c.End == "" {
+	if !create && c.Summary == nil && c.Location == nil && c.Description == nil && c.Start == "" && c.End == "" && c.RRule == nil {
 		return fmt.Errorf("provide at least one field to edit")
 	}
 	return nil
@@ -80,8 +110,33 @@ func (c Changes) apply(e ical.Event) {
 			e.Props.SetDate("DTSTART", start)
 			e.Props.SetDate("DTEND", end)
 		} else {
-			e.Props.SetDateTime("DTSTART", start.UTC())
-			e.Props.SetDateTime("DTEND", end.UTC())
+			zone := c.Timezone
+			if zone == "" && e.Props.Get("DTSTART") != nil {
+				zone = e.Props.Get("DTSTART").Params.Get("TZID")
+			}
+			loc := time.UTC
+			if zone != "" {
+				if parsed, err := time.LoadLocation(zone); err == nil {
+					loc = parsed
+				}
+			}
+			endLoc := loc
+			if c.Timezone == "" {
+				if prop := e.Props.Get("DTEND"); prop != nil && prop.Params.Get("TZID") != "" {
+					if parsed, err := time.LoadLocation(prop.Params.Get("TZID")); err == nil {
+						endLoc = parsed
+					}
+				}
+			}
+			e.Props.SetDateTime("DTSTART", start.In(loc))
+			e.Props.SetDateTime("DTEND", end.In(endLoc))
+		}
+	}
+	if c.RRule != nil {
+		if *c.RRule == "" {
+			e.Props.Del("RRULE")
+		} else {
+			e.Props.Set(&ical.Prop{Name: "RRULE", Value: strings.TrimPrefix(*c.RRule, "RRULE:")})
 		}
 	}
 	now := time.Now().UTC()
@@ -135,20 +190,31 @@ func mutationRequest(ctx context.Context, client *http.Client, method string, ta
 	return resp, nil
 }
 
-// Mutate creates, edits or deletes a standalone event. Edits retain unmodified
-// properties and alarms; edit/delete require a strong server ETag.
+// Mutate changes ordinary calendar resources. Scheduling objects require the
+// separately authorized Schedule entry point because PUT/DELETE can send mail.
 func Mutate(ctx context.Context, client *http.Client, endpoint string, c Calendar, action, object string, changes Changes) (string, error) {
+	return mutate(ctx, client, endpoint, c, action, object, changes, nil)
+}
+
+func mutate(ctx context.Context, client *http.Client, endpoint string, c Calendar, action, object string, changes Changes, scheduling *scheduleContext) (string, error) {
 	if action != "create" && action != "edit" && action != "delete" {
 		return "", fmt.Errorf("unknown event action %q", action)
 	}
+	if err := changes.ValidateScope(); err != nil {
+		return "", err
+	}
 	if action != "delete" {
-		if err := changes.Validate(action == "create"); err != nil {
-			return "", err
+		if action == "create" || scheduling == nil || hasChangeFields(changes) {
+			if err := changes.Validate(action == "create"); err != nil {
+				return "", err
+			}
 		}
 	}
 	var data *ical.Calendar
 	var event ical.Event
+	var events []ical.Event
 	etag := "*"
+	scheduleTag := ""
 	if action == "create" {
 		var id [16]byte
 		if _, err := rand.Read(id[:]); err != nil {
@@ -176,56 +242,137 @@ func Mutate(ctx context.Context, client *http.Client, endpoint string, c Calenda
 			return "", err
 		}
 		etag = resp.Header.Get("ETag")
-		data, err = ical.NewDecoder(io.LimitReader(resp.Body, 10<<20)).Decode()
+		scheduleTag = resp.Header.Get("Schedule-Tag")
+		raw, err := io.ReadAll(io.LimitReader(resp.Body, (10<<20)+1))
 		resp.Body.Close()
+		if err != nil {
+			return "", err
+		}
+		if len(raw) > 10<<20 {
+			return "", fmt.Errorf("calendar object exceeds 10 MiB")
+		}
+		data, err = ical.NewDecoder(bytes.NewReader(raw)).Decode()
 		if err != nil {
 			return "", fmt.Errorf("read event: %w", err)
 		}
 		if len(etag) < 2 || !strings.HasPrefix(etag, "\"") || !strings.HasSuffix(etag, "\"") {
 			return "", fmt.Errorf("server did not supply a strong ETag; cannot safely %s", action)
 		}
-		events := data.Events()
-		if len(events) != 1 {
-			return "", fmt.Errorf("only standalone events can be edited or deleted")
+		event, events, err = masterEvent(data)
+		if err != nil {
+			return "", err
 		}
-		for _, child := range data.Children {
-			if child.Name != "VEVENT" && child.Name != "VTIMEZONE" {
-				return "", fmt.Errorf("object contains non-event components; cannot safely %s", action)
+		if scheduling == nil {
+			for _, e := range events {
+				if e.Props.Get("ORGANIZER") != nil || e.Props.Get("ATTENDEE") != nil {
+					return "", fault.New("permission_denied", "meeting resources require explicit invite, respond, or cancel authorization")
+				}
 			}
 		}
-		event = events[0]
-		if uid, err := event.Props.Text("UID"); err != nil || uid == "" {
-			return "", fmt.Errorf("event has no valid UID")
+		isRecurring := recurring(event) || len(events) > 1
+		if isRecurring && changes.Scope == "" {
+			return "", fmt.Errorf("recurring resources require explicit series or occurrence scope")
 		}
-		for _, key := range []string{"RRULE", "RDATE", "EXRULE", "EXDATE", "RECURRENCE-ID"} {
-			if event.Props.Get(key) != nil {
-				return "", fmt.Errorf("recurring events cannot yet be edited or deleted")
+		if changes.Scope == "occurrence" {
+			if !isRecurring {
+				return "", fmt.Errorf("occurrence scope requires a recurring event")
 			}
+			event, err = selectOccurrence(ctx, data, event, events, changes.RecurrenceID)
+			if err != nil {
+				return "", err
+			}
+		}
+	}
+	if scheduling != nil {
+		if err := scheduling.prepare(data, event, action, changes); err != nil {
+			return "", err
 		}
 	}
 	method := http.MethodDelete
 	var body bytes.Buffer
-	if action != "delete" {
-		changes.apply(event)
-		if action == "edit" {
-			seq := 0
-			if p := event.Props.Get("SEQUENCE"); p != nil {
-				seq, err = p.Int()
-				if err != nil || seq < 0 || seq == int(^uint(0)>>1) {
-					return "", fmt.Errorf("invalid event SEQUENCE")
+	if action != "delete" || changes.Scope == "occurrence" {
+		if action == "delete" && changes.Scope == "occurrence" {
+			if scheduling != nil {
+				event.Props.SetText("STATUS", "CANCELLED")
+			} else {
+				master, _, err := masterEvent(data)
+				if err != nil {
+					return "", err
+				}
+				targetTime, err := occurrenceTime(master, changes.RecurrenceID)
+				if err != nil {
+					return "", err
+				}
+				master.Props.Add(dateLike("EXDATE", master.Props.Get("DTSTART"), targetTime))
+				children := data.Children[:0]
+				for _, child := range data.Children {
+					if child != event.Component {
+						children = append(children, child)
+					}
+				}
+				data.Children = children
+				event = master
+			}
+		} else {
+			if changes.Start != "" && changes.Timezone == "" {
+				for _, key := range []string{"DTSTART", "DTEND"} {
+					if prop := event.Props.Get(key); prop != nil && prop.Params.Get("TZID") != "" {
+						if _, err := time.LoadLocation(prop.Params.Get("TZID")); err != nil {
+							return "", fmt.Errorf("cannot preserve unknown event timezone")
+						}
+					}
 				}
 			}
-			event.Props.Set(&ical.Prop{Name: "SEQUENCE", Value: strconv.Itoa(seq + 1)})
+			changes.apply(event)
+		}
+		if action != "create" && (scheduling == nil || scheduling.request.Action != "respond") {
+			if err := incrementSequence(event); err != nil {
+				return "", err
+			}
+		}
+
+		if changes.RRule != nil || changes.Start != "" {
+			if err := validateUntil(event); err != nil {
+				return "", err
+			}
+		}
+		if changes.Start != "" || changes.RRule != nil {
+			if err := ensureTimezone(data, event); err != nil {
+				return "", err
+			}
 		}
 		if err := ical.NewEncoder(&body).Encode(data); err != nil {
 			return "", err
 		}
 		method = http.MethodPut
 	}
-	resp, err := mutationRequest(ctx, client, method, target, body.Bytes(), etag)
+	requestClient := client
+	if scheduling != nil && scheduleTag != "" {
+		copy := *client
+		copy.Transport = scheduleTagTransport{Base: client.Transport, Tag: scheduleTag}
+		requestClient = &copy
+	}
+	resp, err := mutationRequest(ctx, requestClient, method, target, body.Bytes(), etag)
 	if err != nil {
 		return "", err
 	}
 	resp.Body.Close()
 	return target.EscapedPath(), nil
+}
+func hasChangeFields(c Changes) bool {
+	return c.Summary != nil || c.Location != nil || c.Description != nil || c.Start != "" || c.End != "" || c.RRule != nil || c.Timezone != ""
+}
+func incrementSequence(event ical.Event) error {
+	seq := 0
+	if p := event.Props.Get("SEQUENCE"); p != nil {
+		var err error
+		seq, err = p.Int()
+		if err != nil || seq < 0 || seq == int(^uint(0)>>1) {
+			return fmt.Errorf("invalid event SEQUENCE")
+		}
+	}
+	event.Props.Set(&ical.Prop{Name: "SEQUENCE", Value: strconv.Itoa(seq + 1)})
+	event.Props.SetDateTime("DTSTAMP", time.Now().UTC())
+	event.Props.SetDateTime("LAST-MODIFIED", time.Now().UTC())
+	return nil
 }

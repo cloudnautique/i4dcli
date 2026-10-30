@@ -27,6 +27,16 @@ type Command struct {
 
 func Commands() []Command {
 	return []Command{
+		{"addressbooks.list", Read, "addressbooks list [options]", nil},
+		{"contacts.list", Read, "contacts list [options]", nil},
+		{"contacts.search", Read, "contacts search --query TEXT [options]", nil},
+		{"contacts.get", Read, "contacts get --addressbook NAME --path PATH", nil},
+		{"contacts.create", Create, "contacts create --addressbook NAME [fields]", nil},
+		{"contacts.edit", Edit, "contacts edit --addressbook NAME --path PATH [fields]", nil},
+		{"contacts.delete", Delete, "contacts delete --addressbook NAME --path PATH", nil},
+		{"events.invite", Send, "events invite [options]", nil},
+		{"events.respond", Send, "events respond [options]", nil},
+		{"events.cancel", Send, "events cancel [options]", nil},
 		{"mail.messages.mark", Edit, "mail messages mark [options]", nil},
 		{"mail.messages.move", Delete, "mail messages move [options]", nil},
 		{"mail.messages.trash", Delete, "mail messages trash [options]", nil},
@@ -55,7 +65,7 @@ func Commands() []Command {
 		{"config.show", Inspect, "config show [--json]", nil},
 		{"policy", Inspect, "policy [--json]", nil},
 		{"schema", Inspect, "schema [--json]", nil},
-		{"mcp", Read, "mcp [--list-tools] [--allow-tool NAME] [--allow-write] [--allow-delete]", nil},
+		{"mcp", Read, "mcp [--list-tools] [--allow-tool NAME] [--allow-write] [--allow-delete] [--allow-send]", nil},
 	}
 }
 

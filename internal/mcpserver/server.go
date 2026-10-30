@@ -19,6 +19,7 @@ import (
 )
 
 type Options struct {
+	ContactsFactory                                   ContactsFactory
 	MailIdentity                                      func() (string, error)
 	MailSubmit                                        func(context.Context, mail.PreparedMessage) (mail.SendResult, error)
 	MailFactory                                       MailFactory
@@ -32,6 +33,16 @@ type Factory func(context.Context) (*app.Service, func(), error)
 type spec struct{ name, command, description string }
 
 var specs = []spec{
+	{"addressbooks_list", "addressbooks.list", "Discover address books."},
+	{"contacts_list", "contacts.list", "List bounded contacts."},
+	{"contacts_search", "contacts.search", "Search contacts."},
+	{"contacts_get", "contacts.get", "Inspect a contact."},
+	{"contacts_create", "contacts.create", "Create a contact."},
+	{"contacts_edit", "contacts.edit", "Edit contact fields preserving unmodified properties."},
+	{"contacts_delete", "contacts.delete", "Delete one contact with operator authorization."},
+	{"events_invite", "events.invite", "Create or update an organizer meeting and let the CalDAV server schedule invitations."},
+	{"events_respond", "events.respond", "Respond to a meeting invitation."},
+	{"events_cancel", "events.cancel", "Cancel an organizer meeting through server scheduling."},
 	{"mail_messages_mark", "mail.messages.mark", "Set message flags."},
 	{"mail_messages_move", "mail.messages.move", "Move a message."},
 	{"mail_messages_trash", "mail.messages.trash", "Move a message to trash."},
@@ -53,9 +64,9 @@ var specs = []spec{
 	{"calendars_list", "calendars.list", "List available calendars."},
 	{"events_list", "events.list", "List events in a date range. A truncated result requires narrowing the range; no events beyond the limit are returned."},
 	{"events_get", "events.get", "Inspect an event resource, including recurrence rules and exceptions. Inspection does not imply it is editable."},
-	{"events_create", "events.create", "Create a standalone event. All-day end dates are exclusive."},
-	{"events_edit", "events.edit", "Edit a standalone event. Omitted fields are preserved; empty location or description clears it. Start/end must be supplied together."},
-	{"events_delete", "events.delete", "Delete a standalone event. Requires operator authorization; the tool cannot grant itself permission."},
+	{"events_create", "events.create", "Create an event, optionally recurring. All-day end dates are exclusive."},
+	{"events_edit", "events.edit", "Edit an event with explicit scope for recurring resources. Omitted fields are preserved; start/end must be supplied together. Meetings require scheduling tools."},
+	{"events_delete", "events.delete", "Delete an event or scoped recurrence occurrence. Requires operator authorization. Meetings require events_cancel."},
 }
 
 func enabled(p policy.Policy, o Options) ([]spec, error) {
@@ -106,7 +117,7 @@ func enabled(p policy.Policy, o Options) ([]spec, error) {
 		if c.Capability == policy.Send && !o.AllowSend {
 			continue
 		}
-		if c.Capability == policy.Delete && !o.AllowDelete {
+		if (c.Capability == policy.Delete || s.command == "events.cancel") && !o.AllowDelete {
 			continue
 		}
 		if p.Check(s.command) != nil {
@@ -144,7 +155,9 @@ func New(p policy.Policy, o Options, factory Factory) (*server.MCPServer, error)
 			defer cancel()
 			var value any
 			var err error
-			if strings.HasPrefix(s.command, "mail.") {
+			if strings.HasPrefix(s.command, "contacts.") || s.command == "addressbooks.list" {
+				value, err = executeContacts(ctx, p, o, s, req)
+			} else if strings.HasPrefix(s.command, "mail.") {
 				select {
 				case mailSlots <- struct{}{}:
 					defer func() { <-mailSlots }()
@@ -195,24 +208,30 @@ func errorResult(err error) *mcp.CallToolResult {
 }
 
 type input struct {
-	Calendar    string   `json:"calendar"`
-	Calendars   []string `json:"calendars"`
-	Path        string   `json:"path"`
-	From        string   `json:"from"`
-	To          string   `json:"to"`
-	Timezone    string   `json:"timezone"`
-	Today       bool     `json:"today"`
-	Tomorrow    bool     `json:"tomorrow"`
-	Days        int      `json:"days"`
-	Limit       int      `json:"limit"`
-	Summary     *string  `json:"summary"`
-	Location    *string  `json:"location"`
-	Description *string  `json:"description"`
-	Start       string   `json:"start"`
-	End         string   `json:"end"`
+	RRule        *string  `json:"rrule"`
+	Scope        string   `json:"scope"`
+	RecurrenceID string   `json:"recurrence_id"`
+	Calendar     string   `json:"calendar"`
+	Calendars    []string `json:"calendars"`
+	Path         string   `json:"path"`
+	From         string   `json:"from"`
+	To           string   `json:"to"`
+	Timezone     string   `json:"timezone"`
+	Today        bool     `json:"today"`
+	Tomorrow     bool     `json:"tomorrow"`
+	Days         int      `json:"days"`
+	Limit        int      `json:"limit"`
+	Summary      *string  `json:"summary"`
+	Location     *string  `json:"location"`
+	Description  *string  `json:"description"`
+	Start        string   `json:"start"`
+	End          string   `json:"end"`
 }
 
 func execute(ctx context.Context, p policy.Policy, o Options, s spec, req mcp.CallToolRequest, factory Factory) (any, error) {
+	if s.command == "events.invite" || s.command == "events.respond" || s.command == "events.cancel" {
+		return executeScheduling(ctx, p, o, s, req, factory)
+	}
 	if err := p.Check(s.command); err != nil {
 		return nil, err
 	}
@@ -226,7 +245,7 @@ func execute(ctx context.Context, p policy.Policy, o Options, s spec, req mcp.Ca
 	if err = dec.Decode(&in); err != nil {
 		return nil, fault.Usage(err)
 	}
-	if in.Timezone == "" {
+	if in.Timezone == "" && (s.command == "events.list" || s.command == "events.get" || in.Start != "") {
 		in.Timezone = o.DefaultTimezone
 	}
 	var from, to time.Time
@@ -251,7 +270,7 @@ func execute(ctx context.Context, p policy.Policy, o Options, s spec, req mcp.Ca
 			return nil, fault.Usage(err)
 		}
 	case "events.create", "events.edit", "events.delete":
-		mutation, err = (app.Mutation{Action: strings.TrimPrefix(s.command, "events."), Calendar: in.Calendar, Path: in.Path, Changes: calendar.Changes{Summary: in.Summary, Location: in.Location, Description: in.Description, Start: in.Start, End: in.End}}).Validate(p)
+		mutation, err = (app.Mutation{Action: strings.TrimPrefix(s.command, "events."), Calendar: in.Calendar, Path: in.Path, Changes: calendar.Changes{RRule: in.RRule, Scope: in.Scope, RecurrenceID: in.RecurrenceID, Timezone: in.Timezone, Summary: in.Summary, Location: in.Location, Description: in.Description, Start: in.Start, End: in.End}}).Validate(p)
 		if err != nil {
 			return nil, err
 		}
@@ -304,6 +323,12 @@ func execute(ctx context.Context, p policy.Policy, o Options, s spec, req mcp.Ca
 }
 
 func tool(s spec) mcp.Tool {
+	if strings.HasPrefix(s.command, "contacts.") || s.command == "addressbooks.list" {
+		return contactsTool(s)
+	}
+	if s.command == "events.invite" || s.command == "events.respond" || s.command == "events.cancel" {
+		return schedulingTool(s)
+	}
 	if strings.HasPrefix(s.command, "mail.") {
 		return mailTool(s)
 	}
@@ -334,6 +359,12 @@ func tool(s spec) mcp.Tool {
 			dates = append(dates, mcp.Required())
 		}
 		opts = append(opts, mcp.WithString("summary", summary...), mcp.WithString("start", dates...), mcp.WithString("end", dates...), mcp.WithString("location", mcp.MaxLength(10000)), mcp.WithString("description", mcp.MaxLength(100000)))
+	}
+	if s.command == "events.create" || s.command == "events.edit" || s.command == "events.delete" {
+		opts = append(opts, mcp.WithString("scope", mcp.Enum("series", "occurrence")), mcp.WithString("recurrence_id", mcp.MaxLength(128)))
+		if s.command != "events.delete" {
+			opts = append(opts, mcp.WithString("rrule", mcp.MaxLength(2048)), mcp.WithString("timezone", mcp.MaxLength(128)))
+		}
 	}
 	return mcp.NewTool(s.name, opts...)
 }
