@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"regexp"
 	"sort"
@@ -19,12 +20,15 @@ import (
 const testBody = "From: sender@example.com\r\nTo: to@example.com\r\nSubject: Hello\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHello world!"
 
 type fake struct {
-	mu             sync.Mutex
-	commands       []string
-	validity, next uint32
-	uids           []uint32
-	body           string
-	blockList      bool
+	mu                                                             sync.Mutex
+	commands                                                       []string
+	validity, next                                                 uint32
+	uids                                                           []uint32
+	body                                                           string
+	blockList                                                      bool
+	caps                                                           string
+	allowWrite, draft, failExpunge, omitAppendUID, dropAppendReply bool
+	appended                                                       []byte
 }
 
 func (f *fake) transcript() string {
@@ -48,7 +52,7 @@ func connectFake(t *testing.T, f *fake, account string) *Client {
 	go func() {
 		defer b.Close()
 		r := bufio.NewReader(b)
-		fmt.Fprint(b, "* OK [CAPABILITY IMAP4rev1] ready\r\n")
+		fmt.Fprintf(b, "* OK [CAPABILITY %s] ready\r\n", strings.TrimSpace("IMAP4rev1 "+f.caps))
 		for {
 			line, err := r.ReadString('\n')
 			if err != nil {
@@ -64,12 +68,17 @@ func connectFake(t *testing.T, f *fake, account string) *Client {
 			case strings.Contains(line, " LOGIN "):
 				fmt.Fprintf(b, "%s OK login\r\n", tag)
 			case strings.Contains(line, " CAPABILITY"):
-				fmt.Fprintf(b, "* CAPABILITY IMAP4rev1\r\n%s OK capabilities\r\n", tag)
+				fmt.Fprintf(b, "* CAPABILITY %s\r\n%s OK capabilities\r\n", strings.TrimSpace("IMAP4rev1 "+f.caps), tag)
 			case strings.Contains(line, " LIST "):
 				if f.blockList {
 					continue
 				}
+				if strings.Contains(f.caps, "SPECIAL-USE") {
+					fmt.Fprint(b, "* LIST (\\Trash) \"/\" \"Deleted Messages\"\r\n* LIST (\\Drafts) \"/\" \"Drafts\"\r\n")
+				}
 				fmt.Fprintf(b, "* LIST (\\HasNoChildren) \"/\" \"INBOX\"\r\n* LIST (\\Noselect) \"/\" \"Parent\"\r\n%s OK list\r\n", tag)
+			case strings.Contains(line, " SELECT "):
+				fmt.Fprintf(b, "* %d EXISTS\r\n* OK [UIDVALIDITY %d] ids\r\n* OK [UIDNEXT %d] next\r\n%s OK [READ-WRITE] select\r\n", len(f.uids), f.validity, f.next, tag)
 			case strings.Contains(line, " EXAMINE "):
 				fmt.Fprintf(b, "* %d EXISTS\r\n* OK [UIDVALIDITY %d] ids\r\n* OK [UIDNEXT %d] next\r\n%s OK [READ-ONLY] examine\r\n", len(f.uids), f.validity, f.next, tag)
 			case strings.Contains(line, " UID SEARCH "):
@@ -101,10 +110,50 @@ func connectFake(t *testing.T, f *fake, account string) *Client {
 					if strings.Contains(line, "BODY.PEEK") {
 						fmt.Fprintf(b, "* %d FETCH (UID %d BODY[]<0> {%d}\r\n%s)\r\n", i+1, uid, len(f.body), f.body)
 					} else {
-						fmt.Fprintf(b, "* %d FETCH (UID %d FLAGS () INTERNALDATE \"01-Oct-2026 12:00:00 +0000\" RFC822.SIZE %d ENVELOPE (NIL \"Hello\" ((NIL NIL \"sender\" \"example.com\")) NIL NIL ((NIL NIL \"to\" \"example.com\")) NIL NIL NIL \"<id>\"))\r\n", i+1, uid, len(f.body))
+						flags := ""
+						if f.draft {
+							flags = "\\Draft"
+						}
+						fmt.Fprintf(b, "* %d FETCH (UID %d FLAGS (%s) INTERNALDATE \"01-Oct-2026 12:00:00 +0000\" RFC822.SIZE %d ENVELOPE (NIL \"Hello\" ((NIL NIL \"sender\" \"example.com\")) NIL NIL ((NIL NIL \"to\" \"example.com\")) NIL NIL NIL \"<id>\"))\r\n", i+1, uid, flags, len(f.body))
 					}
 				}
 				fmt.Fprintf(b, "%s OK fetch\r\n", tag)
+			case strings.Contains(line, " UID STORE "):
+				fmt.Fprintf(b, "%s OK stored\r\n", tag)
+			case strings.Contains(line, " UID MOVE "):
+				fmt.Fprintf(b, "%s OK [COPYUID 42 1000 77] moved\r\n", tag)
+			case strings.Contains(line, " UID EXPUNGE "):
+				if f.failExpunge {
+					fmt.Fprintf(b, "%s NO [NOPERM] rejected\r\n", tag)
+				} else {
+					fmt.Fprintf(b, "* 1 EXPUNGE\r\n%s OK removed\r\n", tag)
+				}
+			case strings.Contains(line, " APPEND "):
+				matches := regexp.MustCompile(`\{(\d+)\}$`).FindStringSubmatch(line)
+				if len(matches) != 2 {
+					fmt.Fprintf(b, "%s BAD missing literal\r\n", tag)
+					continue
+				}
+				size, _ := strconv.Atoi(matches[1])
+				fmt.Fprint(b, "+ continue\r\n")
+				raw := make([]byte, size)
+				if _, err := io.ReadFull(r, raw); err != nil {
+					return
+				}
+				if _, err := r.ReadString('\n'); err != nil {
+					return
+				}
+				f.mu.Lock()
+				f.appended = raw
+				f.mu.Unlock()
+				if f.dropAppendReply {
+					return
+				}
+				if f.omitAppendUID {
+					fmt.Fprintf(b, "%s OK appended\r\n", tag)
+				} else {
+					fmt.Fprintf(b, "%s OK [APPENDUID 42 77] appended\r\n", tag)
+				}
 			default:
 				fmt.Fprintf(b, "%s BAD unexpected command\r\n", tag)
 			}
@@ -112,7 +161,7 @@ func connectFake(t *testing.T, f *fake, account string) *Client {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
 	defer cancel()
-	c, err := newClient(ctx, a, Options{Username: "person@icloud.com", Password: "secret", AccountID: account})
+	c, err := newClient(ctx, a, Options{Username: "person@icloud.com", Password: "secret", AccountID: account, AllowWrite: f.allowWrite})
 	if err != nil {
 		t.Fatal(err)
 	}

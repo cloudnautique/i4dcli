@@ -27,7 +27,7 @@ func describeFlags(fs *flag.FlagSet) []flagInfo {
 		if getter, ok := f.Value.(flag.Getter); ok {
 			kind = reflect.TypeOf(getter.Get()).String()
 		}
-		result = append(result, flagInfo{Name: f.Name, Type: kind, Default: f.DefValue, Description: f.Usage, Repeatable: f.Name == "calendar" || f.Name == "allow-tool"})
+		result = append(result, flagInfo{Name: f.Name, Type: kind, Default: f.DefValue, Description: f.Usage, Repeatable: f.Name == "calendar" || f.Name == "allow-tool" || f.Name == "attach" || f.Name == "cc" || f.Name == "bcc"})
 	})
 	return result
 }
@@ -52,7 +52,10 @@ func printSchema(out io.Writer, p policy.Policy) error {
 		info := describeFlags(fs)
 		for i := range info {
 			name := info[i].Name
-			info[i].Required = name == "path" || name == "id" || (c.Name == "events.create" && (name == "summary" || name == "start" || name == "end"))
+			if name == "to" && (c.Name == "mail.send" || c.Name == "mail.forward" || c.Name == "mail.drafts.create" || c.Name == "mail.drafts.edit") {
+				info[i].Repeatable = true
+			}
+			info[i].Required = name == "path" || name == "id" || (c.Name == "mail.attachments.get" && (name == "attachment" || name == "output")) || (c.Name == "mail.messages.move" && name == "destination") || (c.Name == "events.create" && (name == "summary" || name == "start" || name == "end"))
 		}
 		constraints := map[string][]string{
 			"events.list":          {"Calendar flags are required unless the selected account config supplies defaults.", "Choose exactly one range: today, tomorrow, days, or the from/to pair.", "days must be 1–3660."},
@@ -64,6 +67,19 @@ func printSchema(out io.Writer, p policy.Policy) error {
 			"mail.messages.list":   {"limit must be 1–100; order is descending UID.", "New queries default to the account mailbox or INBOX; a cursor preserves its original mailbox.", "next_cursor indicates another page; truncated indicates a scan safety limit."},
 			"mail.messages.get":    {"id is an opaque account/mailbox/UIDVALIDITY/UID reference returned by list/search.", "Bodies use PEEK and attachments are metadata only."},
 			"mail.messages.search": {"Search fields are combined with AND; since/before use IMAP internal dates (since inclusive, before exclusive).", "limit must be 1–100; a continuation cursor retains filters; supplied nonempty filters must match."},
+			"mail.messages.mark":   {"Provide seen and/or flagged assignments; omitted flags are preserved."},
+			"mail.messages.move":   {"Requires server-side MOVE and explicit destination; requires confirmation or --force."},
+			"mail.messages.trash":  {"Omitted destination discovers special-use Trash; ambiguous/missing discovery fails. Requires confirmation or --force."},
+			"mail.messages.delete": {"Permanently deletes only the selected UID using UIDPLUS; requires confirmation or --force."},
+			"mail.attachments.get": {"CLI writes only to explicit output using no-overwrite creation; force cannot overwrite. Index is zero-based."},
+			"mail.drafts.create":   {"Recipient/body may be incomplete; configured From required. Omitted mailbox discovers special-use Drafts."},
+			"mail.drafts.get":      {"Requires message still marked Draft."},
+			"mail.drafts.edit":     {"Full replacement of draft content, not a patch. Returns replacement ID and explicit partial progress on failure."},
+			"mail.drafts.delete":   {"Requires Draft flag, UIDPLUS, and confirmation or --force."},
+			"mail.drafts.send":     {"Validates stored draft and configured sender; requires confirmation or --force; original draft retained."},
+			"mail.send":            {"Requires valid recipients/body and configured sender; confirmation or --force; no automatic retries."},
+			"mail.reply":           {"Derives recipients/subject/threading from source; --all includes other recipients; confirmation or --force."},
+			"mail.forward":         {"Includes source body and attachments plus explicit new attachments; confirmation or --force."},
 			"config.show":          {"Always emits JSON containing path, exists, and validated config; does not resolve account selection. --plain is not supported."},
 			"config.path":          {"Prints the XDG config file path without reading the file. --plain is not supported."},
 			"mcp":                  {"allow-delete requires allow-write; execution also requires operator --force.", "Tool permissions intersect command policy; tool calls cannot change server permissions."},

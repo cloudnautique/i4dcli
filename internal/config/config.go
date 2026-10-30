@@ -20,6 +20,7 @@ const maxSize = 1 << 20
 type Mail struct {
 	Address        string `json:"address"`
 	IMAPUsername   string `json:"imap_username,omitempty"`
+	SMTPUsername   string `json:"smtp_username,omitempty"`
 	DefaultMailbox string `json:"default_mailbox,omitempty"`
 }
 
@@ -31,6 +32,12 @@ func (m Mail) Validate() error {
 	}
 	if strings.TrimSpace(m.IMAPUsername) != m.IMAPUsername || len(m.IMAPUsername) > 320 || strings.IndexFunc(m.IMAPUsername, unicode.IsControl) >= 0 {
 		return fmt.Errorf("mail.imap_username must be a login without whitespace edges or control characters")
+	}
+	if m.SMTPUsername != "" {
+		address, err := netmail.ParseAddress(m.SMTPUsername)
+		if err != nil || address.Address != m.SMTPUsername || strings.ContainsAny(m.SMTPUsername, "\r\n") || len(m.SMTPUsername) > 320 {
+			return fmt.Errorf("mail.smtp_username must be a full email address without a display name")
+		}
 	}
 	if strings.TrimSpace(m.DefaultMailbox) != m.DefaultMailbox || len(m.DefaultMailbox) > 1024 || strings.IndexFunc(m.DefaultMailbox, unicode.IsControl) >= 0 {
 		return fmt.Errorf("mail.default_mailbox must be an exact mailbox name without whitespace edges or control characters")

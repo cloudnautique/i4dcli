@@ -1,9 +1,12 @@
-// Package mail provides bounded, read-only access to iCloud Mail over IMAP.
+// Package mail provides bounded IMAP access and SMTP submission for iCloud Mail.
 package mail
 
 import "time"
 
-type Options struct{ Username, Password, AccountID string }
+type Options struct {
+	Username, Password, AccountID string
+	AllowWrite                    bool
+}
 type Filter struct {
 	From    string `json:"from,omitempty"`
 	To      string `json:"to,omitempty"`
@@ -42,14 +45,42 @@ type Page struct {
 	Truncated  bool      `json:"truncated"`
 }
 type Attachment struct {
+	Index       int    `json:"index"`
 	Filename    string `json:"filename,omitempty"`
 	ContentType string `json:"content_type"`
 	Size        int64  `json:"size"`
 }
 type Message struct {
+	Cc []string `json:"cc,omitempty"`
 	Summary
+	MessageID     string       `json:"message_id,omitempty"`
+	ReplyTo       []string     `json:"reply_to,omitempty"`
+	References    []string     `json:"references,omitempty"`
+	InReplyTo     string       `json:"in_reply_to,omitempty"`
 	Text          string       `json:"text,omitempty"`
 	HTML          string       `json:"html,omitempty"`
 	Attachments   []Attachment `json:"attachments"`
 	BodyTruncated bool         `json:"body_truncated"`
+}
+
+// FlagChanges assigns flags explicitly; nil leaves the existing value unchanged.
+type FlagChanges struct {
+	Seen    *bool `json:"seen,omitempty"`
+	Flagged *bool `json:"flagged,omitempty"`
+}
+
+type MutationResult struct {
+	Action         string `json:"action"`
+	ID             string `json:"id,omitempty"`
+	PreviousID     string `json:"previous_id,omitempty"`
+	Mailbox        string `json:"mailbox,omitempty"`
+	Completed      bool   `json:"completed"`
+	Partial        bool   `json:"partial,omitempty"`
+	OutcomeUnknown bool   `json:"outcome_unknown,omitempty"`
+	Warning        string `json:"warning,omitempty"`
+}
+
+type AttachmentData struct {
+	Attachment
+	Data []byte `json:"data"`
 }

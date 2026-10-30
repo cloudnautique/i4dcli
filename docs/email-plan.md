@@ -1,10 +1,11 @@
 # Email implementation plan
 
-Status: read-only IMAP CLI and MCP implemented on 2026-10-29. Folders,
-message listing, reading, and typed search are available; see README for current
-configuration and limits. Fake-server tests and cross-platform builds pass.
-Live iCloud interoperability still requires account validation. Mailbox changes,
-drafts, sending, and persistent sync below remain proposed future milestones.
+Status: implemented through the read, organization, draft, attachment, and
+explicit-send milestones, 2026-10-30. This document records the original design;
+README and command/tool schemas describe the delivered interface and limits.
+Automated local IMAP/SMTP tests cover the implementations. Live iCloud capability
+and Sent-copy behavior validation remains separate; background sync/cache and
+credential keyring support are deferred.
 
 ## Verified starting points
 
@@ -56,7 +57,7 @@ profiles (`readonly`, `editor`, `full`). The proposed account extension is:
 }
 ```
 
-This is a future account fragment, not accepted configuration today. `address`
+This account fragment is now accepted configuration. `address`
 is required for mail; it need not match the Apple Account username used by CalDAV.
 Default both protocol usernames to that full mailbox address and allow explicit
 IMAP override, rather than trying multiple identities after authentication errors.

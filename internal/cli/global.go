@@ -30,7 +30,7 @@ func parseGlobal(args []string) ([]string, globals, error) {
 	fs := globalFlags(&g)
 	globalArgs, rest := []string{}, []string{}
 	requestedJSON := false
-	localValues := map[string]bool{"calendar": true, "from": true, "to": true, "timezone": true, "path": true, "summary": true, "location": true, "description": true, "start": true, "end": true, "days": true, "allow-tool": true, "max-results": true, "max-output-bytes": true, "mailbox": true, "limit": true, "cursor": true, "id": true, "subject": true, "since": true, "before": true}
+	localValues := map[string]bool{"calendar": true, "from": true, "to": true, "timezone": true, "path": true, "summary": true, "location": true, "description": true, "start": true, "end": true, "days": true, "allow-tool": true, "max-results": true, "max-output-bytes": true, "mailbox": true, "limit": true, "cursor": true, "id": true, "subject": true, "since": true, "before": true, "destination": true, "output": true, "attachment": true, "attach": true, "cc": true, "bcc": true, "body": true, "html": true}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if arg == "--" {

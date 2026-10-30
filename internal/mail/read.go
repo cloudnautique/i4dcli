@@ -13,7 +13,11 @@ import (
 func (c *Client) Folders(ctx context.Context) ([]Folder, error) {
 	ctx, end := c.operation(ctx)
 	defer end()
-	cmd := c.imap.List("", "*", nil)
+	opts := &imap.ListOptions{}
+	if c.imap.Caps().Has(imap.CapSpecialUse) {
+		opts.ReturnSpecialUse = true
+	}
+	cmd := c.imap.List("", "*", opts)
 	result := []Folder{}
 	for m := cmd.Next(); m != nil; m = cmd.Next() {
 		if len(result) >= 1000 {

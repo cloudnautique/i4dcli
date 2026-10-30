@@ -9,7 +9,7 @@ import (
 	"net/http"
 )
 
-var Codes = map[string]int{"error": 1, "usage": 2, "auth_required": 4, "not_found": 5, "permission_denied": 6, "rate_limited": 7, "retryable": 8, "conflict": 9, "config": 10, "confirmation_required": 11, "cancelled": 130}
+var Codes = map[string]int{"error": 1, "usage": 2, "auth_required": 4, "not_found": 5, "permission_denied": 6, "rate_limited": 7, "retryable": 8, "conflict": 9, "config": 10, "confirmation_required": 11, "delivery_unknown": 12, "cancelled": 130}
 
 type Error struct {
 	Code    int    `json:"code"`

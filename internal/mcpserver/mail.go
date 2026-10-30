@@ -35,6 +35,9 @@ func executeMail(ctx context.Context, p policy.Policy, o Options, s spec, req mc
 	if err := p.Check(s.command); err != nil {
 		return nil, err
 	}
+	if extendedMail(s.command) {
+		return executeMailExtended(ctx, p, o, s, req)
+	}
 	if o.DryRun {
 		return nil, fault.New("usage", "dry-run does not apply to mail reads")
 	}
@@ -89,6 +92,9 @@ func executeMail(ctx context.Context, p policy.Policy, o Options, s spec, req mc
 	}
 }
 func mailTool(s spec) mcp.Tool {
+	if extendedMail(s.command) {
+		return extendedMailTool(s)
+	}
 	opts := []mcp.ToolOption{mcp.WithDescription(s.description), mcp.WithSchemaAdditionalProperties(false), mcp.WithReadOnlyHintAnnotation(true), mcp.WithDestructiveHintAnnotation(false), mcp.WithIdempotentHintAnnotation(true), mcp.WithOpenWorldHintAnnotation(true)}
 	switch s.command {
 	case "mail.messages.get":

@@ -32,6 +32,7 @@ func mcpFlags(out io.Writer) (*flag.FlagSet, *mcpOptions) {
 	fs.SetOutput(out)
 	fs.BoolVar(&o.listTools, "list-tools", false, "print enabled tool schemas as JSON without credentials")
 	fs.Var(&o.tools, "allow-tool", "exact tool names, comma-separated; may be repeated")
+	fs.BoolVar(&o.AllowSend, "allow-send", false, "expose mail submission tools; requires allow-write and operator force")
 	fs.BoolVar(&o.AllowWrite, "allow-write", false, "expose permitted create/edit tools")
 	fs.BoolVar(&o.AllowDelete, "allow-delete", false, "expose delete tool; requires --allow-write and --force for execution")
 	fs.IntVar(&o.MaxResults, "max-results", 1000, "maximum list results returned per call (1–10000)")
@@ -72,11 +73,20 @@ func runMCP(ctx context.Context, args []string, g globals, p policy.Policy, out,
 		return err
 	}
 	o.DefaultTimezone = account.Timezone
+	o.MailIdentity = func() (string, error) { settings, err := mailSettings(g, account); return settings.Address, err }
+	o.MailSubmit = func(ctx context.Context, message mail.PreparedMessage) (mail.SendResult, error) {
+		opts, err := mailSMTPOptions(g, account, true, io.Discard)
+		if err != nil {
+			return mail.SendResult{}, err
+		}
+		return mail.Send(ctx, opts, message)
+	}
 	o.MailFactory = func(ctx context.Context) (mcpserver.MailClient, error) {
 		opts, err := mailCredentials(g, account, true, io.Discard)
 		if err != nil {
 			return nil, err
 		}
+		opts.AllowWrite = o.AllowWrite && !p.ReadOnly()
 		return mail.Dial(ctx, opts)
 	}
 	factory := func(context.Context) (*app.Service, func(), error) {

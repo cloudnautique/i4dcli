@@ -1,10 +1,10 @@
 # i4dcli
 
-A Go CLI for iCloud calendar discovery, event management, and read-only Mail. Uses
+A Go CLI for iCloud calendar discovery, event management, and Mail. Uses
 [go-webdav](https://github.com/emersion/go-webdav) for CalDAV. No Mac or local
 Calendar app is required. Lists calendar collections and events in a date range,
 and creates, edits, and deletes standalone events. Mail supports folder discovery,
-paged message listing/search, and bounded message reads through IMAP.
+paged reads/search, flags and moves, drafts, attachments, and SMTP submission.
 
 ## Build and run
 
@@ -206,7 +206,7 @@ Recurring events, including individual occurrences, cannot yet be edited or
 deleted. These commands reject them without writing. Creating recurrence rules
 and managing meeting invitations are not supported.
 
-## Read-only iCloud Mail
+## iCloud Mail
 
 Configure a separate mail identity within a named account. Calendar `username`
 and mail `address` can differ; a mail-only account may omit `username`:
@@ -231,7 +231,9 @@ and mail `address` can differ; a mail-only account may omit `username`:
 `imap_username` defaults to `address`; `default_mailbox` defaults to `INBOX`.
 The optional IMAP login override supports accounts requiring a different login,
 such as the mailbox local part. The address must be a full email address without
-a display name. SMTP settings and sending are not implemented.
+a display name. Optional `smtp_username` defaults to `address` and must be a full
+email address. SMTP connects to Apple on port 587 and requires verified STARTTLS
+before authentication. The configured `address` supplies the From identity.
 
 For environment-only use, set `ICLOUD_MAIL_ADDRESS` and `ICLOUD_APP_PASSWORD`.
 `--mail-address` overrides the environment, then configured `mail.address`.
@@ -255,9 +257,9 @@ These are read operations allowed by all profiles; exact permissions are
 `mail.messages.search`. Denied commands fail before password prompts or network
 activity. `--dry-run` and `--force` do not apply to mail reads.
 
-Mail connects only to Apple's IMAP service with TLS. Mailbox selection is
-read-only and body reads use PEEK, so reading does not mark mail as seen.
-There are no send, mark, move, delete, or attachment-download commands.
+Mail connects only to Apple's IMAP service with TLS. Read operations select
+mailboxes read-only and use PEEK for bodies, so reading does not mark mail as seen.
+Writes require explicitly selected commands and separate permission checks.
 
 List/search return a page with `messages`, `returned`, optional `next_cursor`,
 and `truncated`. The default limit is 50, maximum 100. Messages are ordered by
@@ -285,6 +287,83 @@ JSON preserves message field values. Human tables and `--plain` TSV replace
 control characters with spaces, including inside message bodies. Page cursors
 and scan-limit notices go to stderr in human/TSV mode; JSON includes them in the
 page object. `--timeout` bounds the whole CLI mail operation.
+
+### Organize messages, drafts, attachments, and send
+
+```sh
+# Assign flags; unspecified flags are preserved.
+i4d mail messages mark --id '<id>' --seen=true --flagged=false
+
+# Move, trash, or permanently delete one message.
+i4d mail messages move --id '<id>' --destination Archive
+i4d mail messages trash --id '<id>'
+i4d mail messages delete --id '<id>'
+
+# Download by the zero-based attachment index returned by get.
+i4d mail attachments get --id '<id>' --attachment 0 --output ./invoice.pdf
+
+# Drafts may have incomplete recipients/body; sending validates the complete message.
+i4d mail drafts create --to recipient@example.com --subject Hello --body 'Draft text'
+i4d mail drafts get --id '<draft-id>'
+i4d mail drafts edit --id '<draft-id>' --to recipient@example.com \
+  --subject Updated --body 'Replacement text'
+i4d mail drafts delete --id '<draft-id>'
+i4d mail drafts send --id '<draft-id>'
+
+# Compose, reply, reply-all, or forward. Repeat recipient/attachment flags.
+i4d mail send --to recipient@example.com --cc colleague@example.com \
+  --bcc private@example.com --subject Hello --body 'Message text' --attach ./report.pdf
+i4d mail reply --id '<id>' --body 'Thanks!' --all
+i4d mail forward --id '<id>' --to recipient@example.com --body 'For your review'
+
+# Local preview: no password, remote reads, or writes.
+i4d mail messages delete --id '<id>' --dry-run --json
+i4d --mail-address you@icloud.com mail send --to recipient@example.com \
+  --subject Hello --body 'Message text' --dry-run --json
+```
+
+`readonly` permits reads and attachment downloads; `editor` additionally permits
+flag changes and draft creation/editing. Move, trash, permanent deletion, and draft
+deletion require `full`. SMTP submission is a separate Send capability: send,
+reply, forward, and draft-send require `full`; `editor` cannot send.
+Exact command allowlists and embedded profiles still apply to every operation.
+
+Destructive operations and sends require terminal confirmation or `--force`.
+`--no-input` never grants that authorization. Send confirmation shows the resolved
+recipients and subject; reply and draft-send resolve the source before this review.
+There are no automatic retries. A `delivery_unknown` error (exit 12) means SMTP
+acceptance could not be determined: inspect the mailbox before deciding what to do.
+A successful result means SMTP accepted the message, not that it reached an inbox.
+The client does not append an extra Sent copy. Draft-send retains the original
+draft and reports that fact; sending it again submits another message.
+
+Moves require server-side MOVE. Trash discovers the special-use Trash folder,
+or takes an explicit `--destination`; ambiguous or missing discovery fails.
+Draft creation similarly discovers Drafts or accepts `--mailbox`. Permanent
+message/draft deletion requires UIDPLUS and expunges only the selected UID;
+there is no fallback to global EXPUNGE. Draft editing is a **full replacement**,
+including recipients, bodies, and attachments. It appends the new draft before
+removing the previous one, so retain the returned replacement ID. Partial or
+uncertain mutations return their known progress and IDs alongside the error;
+inspect the result before retrying. Draft get/edit/delete/send verify the Draft flag.
+
+`--attach` reads explicit local files (at most 20 files totaling 1 MiB for CLI
+uploads). `--body` and `--html` are literal text, not filenames. Outgoing content
+is bounded at 10 MiB before MIME encoding; drafts and source-message reads have
+stricter raw-message limits of 2 MiB. Attachments returned by reads are bounded
+by the 1 MiB decoded-content limit. Download uses only the explicit `--output`
+path, creates a private file, and refuses existing paths even with `--force`.
+Remote attachment filenames never choose the output path. Forwarding includes
+original body/attachments plus any explicit `--attach` files; reply attachments
+must be explicitly supplied. Bcc is kept in stored drafts and the SMTP envelope,
+and removed from transmitted message headers. Missing or unsafe original attachment
+filenames receive generated names when forwarding.
+
+Dry runs validate local intent and make no network calls. Source-derived reply,
+forward, and draft-send content and recipients remain unverified in previews.
+They do not reserve remote paths or persist generated identifiers. Compose previews require
+only a configured non-secret sender identity, never a password. Attachment-download
+previews do not create files. All dry runs retain the underlying command's policy.
 
 ## Development
 
@@ -459,7 +538,8 @@ stdout output or an MCP protocol stream. Always check the process exit status.
 | 8 | `retryable` | Network failure, timeout, or server failure |
 | 9 | `conflict` | Concurrent change or resource conflict |
 | 10 | `config` | Required credentials are missing |
-| 11 | `confirmation_required` | Deletion lacks operator authorization |
+| 11 | `confirmation_required` | Destructive operation or send lacks operator authorization |
+| 12 | `delivery_unknown` | SMTP delivery acceptance is uncertain; do not retry automatically |
 | 130 | `cancelled` | Operation interrupted or confirmation declined |
 
 There are no automatic retries. After a timeout on a mutation, inspect the
@@ -509,6 +589,20 @@ change accounts, hosts, or credentials. For new mail list/search queries, MCP
 defaults to INBOX; the configured `default_mailbox` is a CLI default only. Pass
 an explicit mailbox to MCP when needed. Mail IDs/cursors and search filters have
 the same semantics as the CLI; `mail_messages_get` takes `id`.
+
+Mail write tools follow the same startup gates: `--allow-write` for mark and
+draft creation/editing; destructive tools additionally need `--allow-delete`
+and operator `--force`. Submission tools (`mail_send`, `mail_reply`,
+`mail_forward`, `mail_drafts_send`) require `--allow-write --allow-send --force`
+plus the command's permission. `--profile editor` cannot enable sending.
+
+MCP compose/draft inputs use a nested `message` object with `to`, `cc`, `bcc`,
+`subject`, `text`, `html`, and optional `attachments` (filename, content_type,
+base64-encoded data). From identity is selected by the server operator. Reply and
+forward inputs take `id`, nested `message.text`/`message.to`, and `reply_all`
+for reply-all.
+MCP attachment reads return bounded base64 data and metadata; tools cannot choose
+filesystem paths. Use `mcp --list-tools` to inspect the exact current schemas.
 
 `--allow-tool` accepts exact names, comma-separated or repeated. It narrows the
 surface; it cannot grant a forbidden capability. Empty lists and unknown names
@@ -609,6 +703,7 @@ and are not automatically merged.
 
 ## Email roadmap
 
-Read-only iCloud Mail through IMAP is implemented in the CLI and MCP server.
-The [email implementation plan](docs/email-plan.md) describes the remaining
-mailbox organization, drafts, and explicitly authorized sending milestones.
+Mail reads, organization, drafts, attachments, and explicit sending are implemented
+in the CLI and MCP server. The [email implementation plan](docs/email-plan.md)
+records the architecture and deferred background synchronization/cache work.
+Live Apple-account interoperability still needs a deliberately supplied test account.

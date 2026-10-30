@@ -71,7 +71,7 @@ func printMailMessage(out io.Writer, m mail.Message, g globals) error {
 	fmt.Fprintln(w, "FIELD\tVALUE")
 	for _, field := range []struct{ name, value string }{
 		{"id", m.ID}, {"mailbox", m.Mailbox}, {"uid", strconv.FormatUint(uint64(m.UID), 10)},
-		{"subject", m.Subject}, {"from", strings.Join(m.From, ", ")}, {"to", strings.Join(m.To, ", ")},
+		{"subject", m.Subject}, {"cc", strings.Join(m.Cc, ", ")}, {"message_id", m.MessageID}, {"reply_to", strings.Join(m.ReplyTo, ", ")}, {"from", strings.Join(m.From, ", ")}, {"to", strings.Join(m.To, ", ")},
 		{"internal_date", mailDate(m.InternalDate)}, {"date", mailDate(m.Date)},
 		{"flags", strings.Join(m.Flags, ",")}, {"size", strconv.FormatInt(m.Size, 10)},
 		{"text", m.Text}, {"html", m.HTML}, {"body_truncated", strconv.FormatBool(m.BodyTruncated)},
@@ -79,6 +79,7 @@ func printMailMessage(out io.Writer, m mail.Message, g globals) error {
 		fmt.Fprintf(w, "%s\t%s\n", field.name, clean(field.value))
 	}
 	for i, a := range m.Attachments {
+		fmt.Fprintf(w, "attachments.%d.index\t%d\n", i, a.Index)
 		fmt.Fprintf(w, "attachments.%d.filename\t%s\nattachments.%d.content_type\t%s\nattachments.%d.size\t%d\n", i, clean(a.Filename), i, clean(a.ContentType), i, a.Size)
 	}
 	return flush()

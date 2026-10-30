@@ -68,7 +68,7 @@ Global options (before or after the command):
   --json                        JSON output (including structured errors)
   --plain                       Stable TSV output
   --dry-run                     Local-only mutation preview; no network
-  --force                       Skip delete confirmation; respects permissions
+  --force                       Authorize delete/send confirmation; respects permissions
   --timeout 30s                 Timeout for the entire operation
   --readonly                    Block all mutations
   --no-input                    Never prompt for credentials

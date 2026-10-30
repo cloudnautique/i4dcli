@@ -19,13 +19,14 @@ import (
 const host = "imap.mail.me.com"
 const maxWireBytes = 32 << 20
 
-// Client exposes only read operations. Instances serialize operations and have a
+// Client requires explicit write authorization for mutations. Instances serialize operations and have a
 // bounded lifetime ingress budget; callers normally use one session per request.
 type Client struct {
-	imap    *imapclient.Client
-	conn    net.Conn
-	account string
-	mu      sync.Mutex
+	imap       *imapclient.Client
+	conn       net.Conn
+	account    string
+	allowWrite bool
+	mu         sync.Mutex
 }
 
 // Dial connects only to Apple's IMAP endpoint using verified TLS. AccountID is a
@@ -47,7 +48,7 @@ func Dial(ctx context.Context, o Options) (*Client, error) {
 func newClient(ctx context.Context, conn net.Conn, o Options) (*Client, error) {
 	key := sha256.Sum256([]byte(host + "\x00" + o.AccountID + "\x00" + o.Username))
 	bounded := &budgetConn{Conn: conn, remaining: maxWireBytes}
-	c := &Client{imap: imapclient.New(bounded, nil), conn: bounded, account: hex.EncodeToString(key[:])}
+	c := &Client{imap: imapclient.New(bounded, nil), conn: bounded, account: hex.EncodeToString(key[:]), allowWrite: o.AllowWrite}
 	ctx, end := c.operation(ctx)
 	defer end()
 	if err := c.imap.Login(o.Username, o.Password).Wait(); err != nil {

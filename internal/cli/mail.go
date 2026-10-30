@@ -35,6 +35,9 @@ func mailSettings(g globals, account config.Account) (config.Mail, error) {
 	if settings.IMAPUsername == "" {
 		settings.IMAPUsername = settings.Address
 	}
+	if settings.SMTPUsername == "" {
+		settings.SMTPUsername = settings.Address
+	}
 	if settings.DefaultMailbox == "" {
 		settings.DefaultMailbox = "INBOX"
 	}
@@ -55,8 +58,15 @@ func mailCredentials(g globals, account config.Account, noInput bool, stderr io.
 }
 
 type mailOptions struct {
-	list mail.ListOptions
-	id   string
+	list                    mail.ListOptions
+	id                      string
+	destination, output     string
+	attachment              int
+	seen, flagged, replyAll bool
+	compose                 mail.Compose
+	changes                 mail.FlagChanges
+	attachments             calendarNames
+	to, cc, bcc             calendarNames
 }
 
 func mailFlags(c policy.Command, out io.Writer) (*flag.FlagSet, *mailOptions) {
@@ -77,8 +87,40 @@ func mailFlags(c policy.Command, out io.Writer) (*flag.FlagSet, *mailOptions) {
 			fs.StringVar(&o.list.Filter.Before, "before", "", "exclusive IMAP internal date: YYYY-MM-DD")
 			fs.BoolVar(&o.list.Filter.Unread, "unread", false, "only messages without the Seen flag")
 		}
-	case "mail.messages.get":
-		fs.StringVar(&o.id, "id", "", "opaque message ID from list/search (required)")
+	}
+	switch c.Name {
+	case "mail.messages.get", "mail.messages.mark", "mail.messages.move", "mail.messages.trash", "mail.messages.delete", "mail.attachments.get", "mail.drafts.get", "mail.drafts.edit", "mail.drafts.delete", "mail.drafts.send", "mail.reply", "mail.forward":
+		fs.StringVar(&o.id, "id", "", "opaque message ID (required)")
+	}
+	switch c.Name {
+	case "mail.messages.mark":
+		fs.BoolVar(&o.seen, "seen", false, "assign Seen explicitly: --seen=true or --seen=false")
+		fs.BoolVar(&o.flagged, "flagged", false, "assign Flagged explicitly: --flagged=true or --flagged=false")
+	case "mail.messages.move", "mail.messages.trash":
+		fs.StringVar(&o.destination, "destination", "", "exact destination mailbox; trash discovers special-use when omitted")
+	case "mail.attachments.get":
+		fs.IntVar(&o.attachment, "attachment", -1, "zero-based attachment index from message metadata (required)")
+		fs.StringVar(&o.output, "output", "", "explicit output filename; never overwrites (required)")
+	case "mail.drafts.create":
+		fs.StringVar(&o.destination, "mailbox", "", "draft mailbox; discover special-use when omitted")
+	}
+	switch c.Name {
+	case "mail.send", "mail.drafts.create", "mail.drafts.edit":
+		fs.Var(&o.to, "to", "recipient email; repeat for multiple recipients")
+		fs.Var(&o.cc, "cc", "CC recipient; repeat")
+		fs.Var(&o.bcc, "bcc", "BCC recipient; repeat")
+		fs.StringVar(&o.compose.Subject, "subject", "", "message subject")
+		fs.StringVar(&o.compose.Text, "body", "", "plain text body (literal text)")
+		fs.StringVar(&o.compose.HTML, "html", "", "HTML body (literal inert text)")
+		fs.Var(&o.attachments, "attach", "attachment file; repeat; bounded local reads")
+	case "mail.reply":
+		fs.StringVar(&o.compose.Text, "body", "", "reply text")
+		fs.BoolVar(&o.replyAll, "all", false, "reply to original sender and other recipients")
+		fs.Var(&o.attachments, "attach", "attachment file; repeat")
+	case "mail.forward":
+		fs.Var(&o.to, "to", "forward recipient; repeat")
+		fs.StringVar(&o.compose.Text, "body", "", "introductory text")
+		fs.Var(&o.attachments, "attach", "attachment file; repeat")
 	}
 	return fs, o
 }
@@ -87,13 +129,20 @@ func runMail(ctx context.Context, args []string, g globals, p policy.Policy, out
 	if len(args) == 0 || (len(args) == 1 && (args[0] == "--help" || args[0] == "-h")) {
 		return printHelp(out, p, "mail")
 	}
-	if (args[0] == "folders" || args[0] == "messages") && (len(args) == 1 || (len(args) == 2 && (args[1] == "--help" || args[1] == "-h"))) {
+	if (args[0] == "folders" || args[0] == "messages" || args[0] == "attachments" || args[0] == "drafts") && (len(args) == 1 || (len(args) == 2 && (args[1] == "--help" || args[1] == "-h"))) {
 		return printHelp(out, p, "mail."+args[0])
 	}
-	if len(args) < 2 {
-		return fault.New("usage", "expected mail folders list or mail messages list/get/search")
+	name, flagStart := "", 2
+	if args[0] == "send" || args[0] == "reply" || args[0] == "forward" {
+		name = "mail." + args[0]
+		flagStart = 1
+	} else {
+		if len(args) < 2 {
+			return fault.New("usage", "expected a mail command (see mail --help)")
+		}
+		name = "mail." + args[0] + "." + args[1]
 	}
-	c, err := policy.Resolve("mail." + args[0] + "." + args[1])
+	c, err := policy.Resolve(name)
 	if err != nil {
 		return fault.Usage(err)
 	}
@@ -101,7 +150,7 @@ func runMail(ctx context.Context, args []string, g globals, p policy.Policy, out
 		return err
 	}
 	fs, o := mailFlags(c, stderr)
-	if err := fs.Parse(args[2:]); err != nil {
+	if err := fs.Parse(args[flagStart:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
@@ -109,6 +158,9 @@ func runMail(ctx context.Context, args []string, g globals, p policy.Policy, out
 	}
 	if fs.NArg() != 0 {
 		return fault.New("usage", "unexpected mail positional arguments")
+	}
+	if c.Capability != policy.Read || c.Name == "mail.attachments.get" || c.Name == "mail.drafts.get" {
+		return runMailAction(ctx, c, o, fs, g, p, out, stderr)
 	}
 	explicitMailbox := false
 	fs.Visit(func(f *flag.Flag) {

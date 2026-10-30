@@ -10,6 +10,7 @@ import (
 type Capability string
 
 const (
+	Send    Capability = "send"
 	Read    Capability = "read"
 	Create  Capability = "create"
 	Edit    Capability = "edit"
@@ -26,6 +27,20 @@ type Command struct {
 
 func Commands() []Command {
 	return []Command{
+		{"mail.messages.mark", Edit, "mail messages mark [options]", nil},
+		{"mail.messages.move", Delete, "mail messages move [options]", nil},
+		{"mail.messages.trash", Delete, "mail messages trash [options]", nil},
+		{"mail.messages.delete", Delete, "mail messages delete [options]", nil},
+		{"mail.attachments.get", Read, "mail attachments get [options]", nil},
+		{"mail.drafts.create", Create, "mail drafts create [options]", nil},
+		{"mail.drafts.get", Read, "mail drafts get [options]", nil},
+		{"mail.drafts.edit", Edit, "mail drafts edit [options]", nil},
+		{"mail.drafts.delete", Delete, "mail drafts delete [options]", nil},
+		{"mail.drafts.send", Send, "mail drafts send [options]", nil},
+		{"mail.send", Send, "mail send [options]", nil},
+		{"mail.reply", Send, "mail reply [options]", nil},
+		{"mail.forward", Send, "mail forward [options]", nil},
+
 		{"mail.folders.list", Read, "mail folders list [options]", nil},
 		{"mail.messages.list", Read, "mail messages list [--mailbox NAME] [--limit N] [--cursor CURSOR]", nil},
 		{"mail.messages.get", Read, "mail messages get --id ID", nil},
