@@ -104,3 +104,48 @@ func TestSchedulingCapabilityAndIdentityChecks(t *testing.T) {
 		t.Fatalf("owned alias %s %v", method, err)
 	}
 }
+
+func TestSeriesSchedulingRevisesEachChangedComponent(t *testing.T) {
+	source := strings.ReplaceAll(seriesData, "UID:series\r\n", "UID:series\r\nORGANIZER;CN=Owner;SCHEDULE-AGENT=SERVER:mailto:owner@example.com\r\nATTENDEE;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:guest@example.com\r\n")
+	source = strings.Replace(source, "SUMMARY:Exception\r\n", "SUMMARY:Exception\r\nSEQUENCE:7\r\n", 1)
+	for _, action := range []string{"invite", "respond"} {
+		t.Run(action, func(t *testing.T) {
+			request := Scheduling{Action: action, Changes: Changes{Scope: "series"}}
+			owned := []string{"owner@example.com"}
+			if action == "invite" {
+				request.Attendees = []string{"new@example.com"}
+			} else {
+				owned = []string{"guest@example.com"}
+				request.PartStat = "ACCEPTED"
+			}
+			cal, method, err := scheduleFixture(t, source, request, "/cal/event.ics", owned, true)
+			if err != nil || method != "PUT" {
+				t.Fatalf("%s %v", method, err)
+			}
+			expected := []string{"2", "8"}
+			if action == "respond" {
+				expected = []string{"1", "7"}
+			}
+			for i, event := range cal.Events() {
+				if event.Props.Get("SEQUENCE").Value != expected[i] {
+					t.Fatalf("component %d sequence=%s", i, event.Props.Get("SEQUENCE").Value)
+				}
+				if event.Props.Get("DTSTAMP").Value == "20261001T120000Z" || event.Props.Get("LAST-MODIFIED") == nil {
+					t.Fatalf("component %d has stale revision timestamps", i)
+				}
+				if action == "invite" && event.Props.Get("ORGANIZER").Params.Get("CN") != "Owner" {
+					t.Fatal("lost organizer metadata")
+				}
+			}
+		})
+	}
+	// A summary-only edit changes the master but must not revise an untouched exception.
+	cal, _, err := scheduleFixture(t, source, Scheduling{Action: "invite", Changes: Changes{Scope: "series", Summary: str("Updated")}}, "/cal/event.ics", []string{"owner@example.com"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exception := cal.Events()[1]
+	if exception.Props.Get("SEQUENCE").Value != "7" || exception.Props.Get("DTSTAMP").Value != "20261001T120000Z" {
+		t.Fatal("unchanged exception revision changed")
+	}
+}

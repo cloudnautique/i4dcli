@@ -9,6 +9,7 @@ import (
 	"net/http"
 	netmail "net/mail"
 	"net/url"
+	"reflect"
 	"strings"
 
 	"github.com/emersion/go-ical"
@@ -96,6 +97,7 @@ func calendarAddress(value string) (string, error) {
 type scheduleContext struct {
 	request Scheduling
 	owned   map[string]bool
+	changed []ical.Event
 }
 
 func Schedule(ctx context.Context, client *http.Client, endpoint string, c Calendar, object string, s Scheduling) (string, error) {
@@ -163,6 +165,7 @@ func (s *scheduleContext) prepare(data *ical.Calendar, event ical.Event, action 
 			return err
 		}
 		for _, target := range targets {
+			before := cloneComponent(target.Component)
 			if target.Props.Get("ORGANIZER") == nil {
 				return fmt.Errorf("resource is not a meeting invitation")
 			}
@@ -192,6 +195,7 @@ func (s *scheduleContext) prepare(data *ical.Calendar, event ical.Event, action 
 				return fault.New("permission_denied", "owned identity is not an attendee on this invitation")
 			}
 			target.Props["ATTENDEE"] = props
+			s.recordChange(before, target)
 		}
 		return nil
 	}
@@ -204,6 +208,7 @@ func (s *scheduleContext) prepare(data *ical.Calendar, event ical.Event, action 
 		return err
 	}
 	for _, target := range targets {
+		before := cloneComponent(target.Component)
 		organizer := target.Props.Get("ORGANIZER")
 		if organizer != nil {
 			address, err := calendarAddress(organizer.Value)
@@ -218,6 +223,11 @@ func (s *scheduleContext) prepare(data *ical.Calendar, event ical.Event, action 
 			return fmt.Errorf("resource is not an organizer meeting")
 		}
 		p := ical.NewProp("ORGANIZER")
+		if organizer != nil {
+			for key, values := range organizer.Params {
+				p.Params[key] = append([]string(nil), values...)
+			}
+		}
 		p.Value = actor
 		p.Params.Set("SCHEDULE-AGENT", "SERVER")
 		target.Props.Set(p)
@@ -253,6 +263,31 @@ func (s *scheduleContext) prepare(data *ical.Calendar, event ical.Event, action 
 		}
 		if s.request.Action == "invite" && len(target.Props.Values("ATTENDEE")) == 0 {
 			return fmt.Errorf("invitation requires attendees")
+		}
+		s.recordChange(before, target)
+	}
+	return nil
+}
+
+// Record semantic edits before timestamps change so unchanged exceptions keep
+// their own revisions. Every changed exception is independently scheduled.
+func (s *scheduleContext) recordChange(before *ical.Component, after ical.Event) {
+	if !reflect.DeepEqual(before, after.Component) {
+		s.changed = append(s.changed, after)
+	}
+}
+func (s *scheduleContext) updateRevisions(selected ical.Event, create bool) error {
+	seen := map[*ical.Component]bool{}
+	for _, event := range append([]ical.Event{selected}, s.changed...) {
+		if seen[event.Component] {
+			continue
+		}
+		seen[event.Component] = true
+		(Changes{}).apply(event)
+		if !create && s.request.Action != "respond" {
+			if err := incrementSequence(event); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

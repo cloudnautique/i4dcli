@@ -106,43 +106,43 @@ func (c *Client) objectURL(book AddressBook, object string) (*url.URL, error) {
 	}
 	return target, nil
 }
-func (c *Client) read(ctx context.Context, book AddressBook, object string) (vcard.Card, string, *url.URL, error) {
+func (c *Client) read(ctx context.Context, book AddressBook, object string) (vcard.Card, string, *url.URL, []byte, error) {
 	target, err := c.objectURL(book, object)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, nil, err
 	}
 	req.Header.Set("Accept", "text/vcard")
 	response, err := c.http.Do(req)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, nil, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 200 {
-		return nil, "", nil, fault.New("error", "unexpected contact read HTTP status")
+		return nil, "", nil, nil, fault.New("error", "unexpected contact read HTTP status")
 	}
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxCard+1))
 	if err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, nil, err
 	}
 	if len(raw) > maxCard {
-		return nil, "", nil, fault.New("error", "contact exceeds 1 MiB")
+		return nil, "", nil, nil, fault.New("error", "contact exceeds 1 MiB")
 	}
 	decoder := vcard.NewDecoder(bytes.NewReader(raw))
 	card, err := decoder.Decode()
 	if err != nil {
-		return nil, "", nil, fault.New("error", "invalid contact vCard")
+		return nil, "", nil, nil, fault.New("error", "invalid contact vCard")
 	}
 	if _, err := decoder.Decode(); err != io.EOF {
-		return nil, "", nil, fault.New("error", "contact must contain exactly one vCard")
+		return nil, "", nil, nil, fault.New("error", "contact must contain exactly one vCard")
 	}
 	if card.Value("VERSION") != "3.0" && card.Value("VERSION") != "4.0" {
-		return nil, "", nil, fault.New("error", "unsupported vCard version")
+		return nil, "", nil, nil, fault.New("error", "unsupported vCard version")
 	}
-	return card, response.Header.Get("ETag"), target, nil
+	return card, response.Header.Get("ETag"), target, raw, nil
 }
 func (c *Client) Get(ctx context.Context, bookName, object string) (Contact, error) {
 	if err := (Query{AddressBook: bookName}).Validate(); err != nil {
@@ -157,7 +157,7 @@ func (c *Client) Get(ctx context.Context, bookName, object string) (Contact, err
 	if err != nil {
 		return Contact{}, err
 	}
-	card, etag, target, err := c.read(ctx, book, object)
+	card, etag, target, _, err := c.read(ctx, book, object)
 	if err != nil {
 		return Contact{}, err
 	}
@@ -187,6 +187,9 @@ func (c Changes) apply(card vcard.Card) {
 		if c.FamilyName != nil {
 			n.FamilyName = *c.FamilyName
 		}
+		// Name embeds the original Field, including parameters and group.
+		// Rebuild this edited property while keeping omitted name components.
+		n.Field = nil
 		card.SetName(n)
 	}
 	for key, values := range map[string]*[]string{"EMAIL": c.Emails, "TEL": c.Phones, "URL": c.URLs} {
@@ -215,6 +218,7 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Result, error) {
 	card := vcard.Card{}
 	etag := "*"
 	var target *url.URL
+	var original []byte
 	if m.Action == "create" {
 		var id [16]byte
 		if _, err := rand.Read(id[:]); err != nil {
@@ -227,7 +231,7 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Result, error) {
 		card.SetName(&vcard.Name{})
 		target, err = c.objectURL(book, strings.TrimSuffix(book.Path, "/")+"/"+uid+".vcf")
 	} else {
-		card, etag, target, err = c.read(ctx, book, m.Path)
+		card, etag, target, original, err = c.read(ctx, book, m.Path)
 		if err == nil && !strongETag(etag) {
 			err = fault.New("conflict", "contact edit/delete requires a strong ETag")
 		}
@@ -240,7 +244,7 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Result, error) {
 	if m.Action != "delete" {
 		method = http.MethodPut
 		m.Changes.apply(card)
-		if err := vcard.NewEncoder(&data).Encode(card); err != nil {
+		if err := encodeContact(&data, card, original, m.Changes); err != nil {
 			return Result{}, err
 		}
 		if data.Len() > maxCard {

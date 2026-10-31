@@ -40,7 +40,9 @@ names cannot contain semicolons or newlines.
 
 Omitted fields retain their vCard values, parameters and groups, including postal
 addresses, photos, Apple custom labels and other unexposed fields. Changed list
-properties receive fresh values without the old labels/parameters. `contacts get`
+properties receive fresh values without the old labels/parameters. Editing
+given/family names likewise rebuilds the N property without its old group or
+parameters, while retaining the omitted logical name components. `contacts get`
 returns normalized fields plus the complete parsed `properties` map for inspection.
 Create writes a vCard 3.0 resource with a generated UID; edits support existing
 vCard 3.0/4.0 resources and keep their version. The library may normalize serialization

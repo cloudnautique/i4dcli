@@ -325,7 +325,11 @@ func mutate(ctx context.Context, client *http.Client, endpoint string, c Calenda
 			}
 			changes.apply(event)
 		}
-		if action != "create" && (scheduling == nil || scheduling.request.Action != "respond") {
+		if scheduling != nil {
+			if err := scheduling.updateRevisions(event, action == "create"); err != nil {
+				return "", err
+			}
+		} else if action != "create" {
 			if err := incrementSequence(event); err != nil {
 				return "", err
 			}
