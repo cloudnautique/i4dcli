@@ -3,12 +3,12 @@ module i4dcli
 go 1.26.0
 
 require (
-	github.com/emersion/go-ical v0.0.0-20240127095438-fc1c9d8fb2b6
+	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-message v0.18.2
 	github.com/emersion/go-vcard v0.1.0
-	github.com/emersion/go-webdav v0.7.0
-	github.com/mark3labs/mcp-go v1.5.0
+	github.com/emersion/go-webdav v0.8.0
+	github.com/mark3labs/mcp-go v1.6.0
 	github.com/teambition/rrule-go v1.8.2
 	golang.org/x/term v0.48.0
 )
